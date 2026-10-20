@@ -290,11 +290,11 @@ func unsafeSourceRef(ref string) bool {
 	if strings.HasPrefix(lower, "file://") {
 		return true
 	}
+	if strings.HasPrefix(ref, "/") || strings.HasPrefix(ref, `\`) {
+		return true
+	}
 	if strings.Contains(ref, "://") {
 		return false
-	}
-	if strings.HasPrefix(ref, `\\`) || strings.HasPrefix(ref, "//") {
-		return true
 	}
 	if len(ref) >= 2 && ref[1] == ':' {
 		c := ref[0]

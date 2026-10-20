@@ -93,6 +93,16 @@ func TestExampleRepositoryIsValid(t *testing.T) {
 	}
 }
 
+func TestHTTPSourceRefsAreAllowed(t *testing.T) {
+	root := exampleCopy(t)
+	edit(t, filepath.Join(root, "work", "agentflow", "memories", "2026-10-20-sse-pitfall.md"),
+		"  kind: conversation", "  kind: conversation\n  ref: https://example.com/sse")
+	res := mustValidate(t, root)
+	if !res.OK() {
+		t.Fatalf("expected an https source.ref to be valid, got %+v", res.Issues)
+	}
+}
+
 func TestSpecifiedInvariants(t *testing.T) {
 	tests := []struct {
 		name   string
@@ -254,6 +264,22 @@ func TestSpecifiedInvariants(t *testing.T) {
 			mutate: func(t *testing.T, root string) {
 				edit(t, filepath.Join(root, "work", "agentflow", "memories", "2026-10-20-sse-pitfall.md"),
 					"  kind: conversation", "  kind: conversation\n  ref: C:\\\\secret\\\\notes.md")
+			},
+			code: CodeSource,
+		},
+		{
+			name: "posix absolute source refs are rejected",
+			mutate: func(t *testing.T, root string) {
+				edit(t, filepath.Join(root, "work", "agentflow", "memories", "2026-10-20-sse-pitfall.md"),
+					"  kind: conversation", "  kind: conversation\n  ref: /etc/passwd")
+			},
+			code: CodeSource,
+		},
+		{
+			name: "rooted backslash source refs are rejected",
+			mutate: func(t *testing.T, root string) {
+				edit(t, filepath.Join(root, "work", "agentflow", "memories", "2026-10-20-sse-pitfall.md"),
+					"  kind: conversation", "  kind: conversation\n  ref: \\\\server\\\\share\\\\notes.md")
 			},
 			code: CodeSource,
 		},
