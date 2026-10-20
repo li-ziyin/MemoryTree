@@ -1,0 +1,125 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:memorytree:schema:v1:node",
+  "title": "MemoryTree node (node.md)",
+  "description": "Validates the parsed YAML frontmatter of a node.md file. Structural rules such as exactly one root and project nodes having no children are enforced by the validator.",
+  "type": "object",
+  "required": [
+    "schema",
+    "id",
+    "kind",
+    "parent",
+    "slug",
+    "title",
+    "summary",
+    "tags_delta",
+    "status",
+    "sensitivity",
+    "created_at",
+    "updated_at"
+  ],
+  "properties": {
+    "schema": {
+      "const": "memorytree.node/v1"
+    },
+    "id": {
+      "$ref": "#/$defs/uuidv7"
+    },
+    "kind": {
+      "type": "string",
+      "enum": ["root", "category", "project"]
+    },
+    "parent": {
+      "anyOf": [
+        { "$ref": "#/$defs/uuidv7" },
+        { "type": "null" }
+      ]
+    },
+    "slug": {
+      "type": "string",
+      "description": "Empty for the root node; otherwise must equal the directory name."
+    },
+    "title": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 120
+    },
+    "summary": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 500,
+      "description": "Navigation summary; 280 characters or fewer is recommended."
+    },
+    "tags_delta": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 32
+      },
+      "uniqueItems": true,
+      "maxItems": 64
+    },
+    "aliases": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 120
+      },
+      "uniqueItems": true,
+      "maxItems": 20,
+      "default": []
+    },
+    "status": {
+      "type": "string",
+      "enum": ["active", "archived"]
+    },
+    "sensitivity": {
+      "type": "string",
+      "enum": ["public", "internal", "private"]
+    },
+    "created_at": {
+      "$ref": "#/$defs/timestamp"
+    },
+    "updated_at": {
+      "$ref": "#/$defs/timestamp"
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": { "kind": { "const": "root" } },
+        "required": ["kind"]
+      },
+      "then": {
+        "properties": {
+          "parent": { "type": "null" },
+          "slug": { "const": "" }
+        }
+      },
+      "else": {
+        "properties": {
+          "parent": { "$ref": "#/$defs/uuidv7" },
+          "slug": {
+            "type": "string",
+            "pattern": "^[a-z0-9][a-z0-9-]{0,63}$"
+          }
+        }
+      }
+    }
+  ],
+  "additionalProperties": true,
+  "$defs": {
+    "uuidv7": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
+    },
+    "timestamp": {
+      "type": "string",
+      "format": "date-time",
+      "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\\.[0-9]+)?(Z|[+-][0-9]{2}:[0-9]{2})$",
+      "description": "RFC 3339 timestamp; UTC with Z is recommended."
+    }
+  }
+}
