@@ -1,6 +1,6 @@
 # MemoryTree 设计文档
 
-- 状态：设计阶段（2026-10-20），尚无实现代码
+- 状态：M0 已完成（2026-10-20），M1 待开始
 - 工作名：MemoryTree；二进制名：`memoryd`
 - 语言与形态：Go，单二进制、默认 stdio、无后台常驻服务
 - 数据目录：独立 git 仓库；本机开发数据先定 `E:\MemoryTreeData`，其他用户默认 `~/.memorytree`
@@ -256,7 +256,7 @@ V1 只生成提案，不自动应用。等真实语料证明树需要频繁调�
 - CI：Linux/macOS/Windows；`go vet`、`staticcheck`/`golangci-lint`、`go test -race`、`govulncheck`、许可证扫描。
 - 发布：GoReleaser；zip/tar.gz 附 LICENSE/NOTICE/THIRD_PARTY_NOTICES；校验和；Sigstore/cosign 或 minisign 签名；SBOM。
 - 模块路径：`go.mod` 目前暂用 `github.com/li-ziyin/memorytree`；公开 GitHub 仓库建立后、首次 push 或打 tag 之前必须改成真实地址，之后不再变动。
-- 文档：README、设计、格式规范、MCP API、迁移、威胁模型、贡献指南。当前设计阶段中文先行，公开首发前补齐英文版；之后英文为主、中文同步。
+- 文档：README、设计、格式规范、MCP API、迁移、威胁模型、贡献指南。当前 M0/M1 阶段中文先行，公开首发前补齐英文版；之后英文为主、中文同步。
 
 ## 10. 里程碑与验收
 
@@ -270,7 +270,7 @@ V1 只生成提案，不自动应用。等真实语料证明树需要频繁调�
 
 ### M1：只读 MCP
 
-前置：源码仓与数据仓各完成一次 `git init` 和初始提交。数据仓的初始提交必须在 `memoryd validate` 全绿之后，用来冻结 M0 基线；M1 及之后的索引、写入才有可审计的起点。
+前置（已于 2026-10-20 完成）：源码仓与数据仓各完成一次 `git init` 和初始提交。数据仓的初始提交必须在 `memoryd validate` 全绿之后，用来冻结 M0 基线；M1 及之后的索引、写入才有可审计的起点。
 
 1. `memoryd index`：FTS5 trigram 构建与 `--rebuild`，记录 generation；先独立验收，不依赖 MCP。
 2. 只读 MCP：`memory_brief / search / get / tree`，先接 Qoder。所有读工具依赖第 1 步的索引。

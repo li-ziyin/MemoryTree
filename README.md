@@ -2,7 +2,7 @@
 
 Local-first, file-based memory for AI agents: a self-organizing tree of Markdown memories shared across ZCode, OpenCode, Qoder, and any MCP-capable client.
 
-> **Status: M0 complete.** The v1 format, a Go validator with stable error codes, repository initialization, and legacy import are working. Search indexing and the MCP server (M1) are next.
+> **Status: M0 complete.** The v1 format, a Go validator with stable error codes, repository initialization, and legacy import are working. The validated M0 source and data baselines are committed to git. Search indexing and the MCP server (M1) are next.
 
 ## Why
 
@@ -97,8 +97,6 @@ These items are not forgotten; each has a fixed point in the roadmap.
 
 | Item | Do it when | Why then |
 |---|---|---|
-| `git init` in this source repository | before M1 starts | Freeze the validated M0 baseline. Every M1 change then has history, and DCO sign-off starts with the first feature commit rather than being retrofitted. |
-| `git init` and first commit in the data repository | before M1 starts, right after `memoryd validate` passes | The initial commit must capture the validated import. The index and later writes are then auditable against a known-good state. |
 | Replace the provisional module path `github.com/li-ziyin/memorytree` | when the public GitHub repository is created, before the first push or tag | A module path is cheap to change now but leaks into imports, CI, and downstream references. Change it once the real URL exists, before anyone depends on it. |
 | `memoryd index` (FTS5 build and rebuild) | first task of M1, before any MCP read tool | `memory_brief`, `search`, `get`, and `tree` all read the index. Building the index without the MCP layer is independently testable and keeps M1 failures easy to localise. |
 
