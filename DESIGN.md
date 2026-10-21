@@ -1,6 +1,6 @@
 # MemoryTree 设计文档
 
-- 状态：M0 已完成（2026-10-20），M1 待开始
+- 状态：M0 已完成（2026-10-20）；M1 进行中：`memoryd index` 已完成（2026-10-21），只读 MCP 待开始
 - 工作名：MemoryTree；二进制名：`memoryd`
 - 语言与形态：Go，单二进制、默认 stdio、无后台常驻服务
 - 数据目录：独立 git 仓库；本机开发数据先定 `E:\MemoryTreeData`，其他用户默认 `~/.memorytree`
@@ -150,6 +150,16 @@ E:\MemoryTreeData\
 - 敏感级别：`public / internal / private`，条目不比所属节点更宽松。
 - 时间：RFC3339 UTC（`Z`）；文件 UTF-8、LF。
 
+### 4.1 检索索引（`memoryd index`）
+
+- 位置与权限：`<data>/.index/index.sqlite`，目录 0700、文件 0600（Windows 上实际由 ACL 决定），SQLite WAL；整个 `.index/` 被 gitignore。
+- 构建顺序：先完整校验；有阻塞错误时退出 1，且不触碰旧索引。校验通过后从验证快照全量构建。
+- 事务性：删表、建表、写入、FTS 完整性检查在同一个 SQLite 事务内；失败回滚，旧索引保持可用。损坏或 schema 不兼容的索引需要显式 `--rebuild` 才替换。
+- 元数据：`meta` 表记录 `schema_version / repo_id / generation / fingerprint / built_at / nodes / entries`。fingerprint 为所有受管文件（`memory.yaml`、`node.md`、`memories/*.md`）内容的 SHA-256。
+- 幂等：fingerprint 未变且未指定 `--rebuild` 时不写入，generation 不变；每次实际重建 generation 加 1。
+- 表：`nodes`、`entries`、`entry_tags`，以及 external-content FTS5 表 `entries_fts(title, summary, tags, body, tokenize='trigram')`。正文只在 `entries` 存一份，`node.md` 正文不进入索引。
+- 查询：每个词至少 3 个字符时走 FTS5 trigram（中文可用）；任一词不足 3 个字符时整体回退为对 title/summary/body 的转义 LIKE。默认只返回 `active`，可按节点、类型、有效标签（AND）、状态过滤，结果上限 100 条。
+
 ## 5. MCP 接口
 
 ### 5.1 工具列表（V1）
@@ -272,7 +282,7 @@ V1 只生成提案，不自动应用。等真实语料证明树需要频繁调�
 
 前置（已于 2026-10-20 完成）：源码仓与数据仓各完成一次 `git init` 和初始提交。数据仓的初始提交必须在 `memoryd validate` 全绿之后，用来冻结 M0 基线；M1 及之后的索引、写入才有可审计的起点。
 
-1. `memoryd index`：FTS5 trigram 构建与 `--rebuild`，记录 generation；先独立验收，不依赖 MCP。
+1. `memoryd index`（已完成 2026-10-21）：FTS5 trigram 构建与 `--rebuild`，源文件 fingerprint 不变时跳过，重建时 generation 递增；已独立验收，不依赖 MCP。
 2. 只读 MCP：`memory_brief / search / get / tree`，先接 Qoder。所有读工具依赖第 1 步的索引。
 
 - FTS5 trigram 中文检索可用；索引可重建。

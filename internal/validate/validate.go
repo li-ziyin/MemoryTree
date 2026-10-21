@@ -18,7 +18,7 @@ type nodeRec struct {
 	node      *model.Node
 	file      string
 	dir       string
-	bodyLen   int
+	digest    string
 	parent    *nodeRec
 	children  []*nodeRec
 	tags      map[string]struct{}
@@ -29,7 +29,8 @@ type entryRec struct {
 	entry   *model.Entry
 	file    string
 	hostDir string
-	bodyLen int
+	digest  string
+	body    string
 	host    *nodeRec
 	tags    map[string]struct{}
 }
@@ -45,6 +46,7 @@ type validator struct {
 	entriesByID        map[string]*entryRec
 	nodesByDir         map[string]*nodeRec
 	idPath             map[string]string
+	repoDigest         string
 	fatal              bool
 }
 
@@ -52,16 +54,25 @@ type validator struct {
 // repository could not be inspected at all; content problems are returned in
 // Result.Issues with stable codes.
 func Validate(root string) (*Result, error) {
+	res, _, err := ValidateWithSnapshot(root)
+	return res, err
+}
+
+// ValidateWithSnapshot validates a repository and, when there are no blocking
+// issues, also returns a read-only view of its nodes and entries together with
+// a fingerprint of every managed file. The snapshot is nil when validation
+// fails.
+func ValidateWithSnapshot(root string) (*Result, *Snapshot, error) {
 	abs, err := filepath.Abs(root)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	info, err := os.Stat(abs)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	if !info.IsDir() {
-		return nil, fmt.Errorf("%s is not a directory", abs)
+		return nil, nil, fmt.Errorf("%s is not a directory", abs)
 	}
 
 	v := &validator{
@@ -83,7 +94,10 @@ func Validate(root string) (*Result, error) {
 		v.checkSupersession()
 	}
 	v.res.sortIssues()
-	return v.res, nil
+	if !v.res.OK() {
+		return v.res, nil, nil
+	}
+	return v.res, v.snapshot(), nil
 }
 
 func (v *validator) rel(p string) string {
@@ -110,6 +124,7 @@ func (v *validator) loadRepo() {
 		return
 	}
 	v.repo = &repo
+	v.repoDigest = digest(data)
 
 	if repo.Schema != model.RepoSchema {
 		v.res.errf(CodeSchema, "memory.yaml", "schema must be %q, got %q", model.RepoSchema, repo.Schema)
@@ -188,7 +203,7 @@ func (v *validator) readNode(p, rel string) {
 		v.reportReadError(rel, err)
 		return
 	}
-	rec.bodyLen = len(doc.Body)
+	rec.digest = digest(doc.Raw)
 
 	var n model.Node
 	if err := format.Decode(doc.Meta, &n); err != nil {
@@ -218,7 +233,8 @@ func (v *validator) readEntry(p, rel string) {
 		v.reportReadError(rel, err)
 		return
 	}
-	rec.bodyLen = len(doc.Body)
+	rec.digest = digest(doc.Raw)
+	rec.body = string(doc.Body)
 
 	var e model.Entry
 	if err := format.Decode(doc.Meta, &e); err != nil {

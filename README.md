@@ -2,7 +2,7 @@
 
 Local-first, file-based memory for AI agents: a self-organizing tree of Markdown memories shared across ZCode, OpenCode, Qoder, and any MCP-capable client.
 
-> **Status: M0 complete.** The v1 format, a Go validator with stable error codes, repository initialization, and legacy import are working. The validated M0 source and data baselines are committed to git. Search indexing and the MCP server (M1) are next.
+> **Status: M0 complete; M1 in progress.** The v1 format, a Go validator with stable error codes, repository initialization, legacy import, and the disposable SQLite FTS5 search index are working. The validated M0 source and data baselines are committed to git. The read-only MCP server is next.
 
 ## Why
 
@@ -41,7 +41,7 @@ MemoryTree separates the shared memory layer from each agent's native memory:
 
 ## Quick start
 
-Requires Go 1.25 or newer and Git 2.30+ (Git is not used by `validate` yet).
+Requires Go 1.25 or newer and Git 2.30+ (Git is not used by `validate` or `index` yet).
 
 ```sh
 go build -o bin/memoryd ./cmd/memoryd
@@ -55,9 +55,17 @@ go build -o bin/memoryd ./cmd/memoryd
 
 # Import an existing flat directory of agent memories
 ./bin/memoryd import-legacy --from ~/.zcode/memories --to ~/.memorytree --agent zcode
+
+# Build or refresh the search index (validates first; safe to rerun)
+./bin/memoryd index ~/.memorytree
+
+# Force a full rebuild, for example after an index schema change or corruption
+./bin/memoryd index --rebuild ~/.memorytree
 ```
 
-On Windows, use paths such as `E:\MemoryTreeData`. `memoryd validate --json` emits machine-readable results. Exit codes: `0` success, `1` validation errors, `2` usage or I/O error, `3` not implemented yet.
+On Windows, use paths such as `E:\MemoryTreeData`. `memoryd validate --json` and `memoryd index --json` emit machine-readable results. Exit codes: `0` success, `1` validation errors, `2` usage or I/O error.
+
+The index lives at `<data-dir>/.index/index.sqlite`. It is derived data: deleting it loses nothing. A normal `memoryd index` is a no-op when the managed files have not changed; any source change triggers a full rebuild in one SQLite transaction and increments the stored `generation`. An unreadable, corrupt, or schema-incompatible index is left in place and reported; rerun with `--rebuild` to replace it. The index contains full entry text, so `memoryd init` gitignores `.index/`; treat it as a local cache.
 
 ## Repository layout
 
@@ -67,6 +75,7 @@ internal/
   docfile/              frontmatter writing with stable YAML style
   format/               file-level parsing and YAML safety rules
   ids/                  UUIDv7 generation and validation
+  index/                SQLite FTS5 build, rebuild, and search
   initrepo/             data repository initialization
   legacy/               flat legacy memory import
   model/                v1 metadata objects
@@ -87,7 +96,7 @@ The user data repository is separate. The default is `~/.memorytree`; it can be 
 ## Roadmap
 
 - **M0** — complete: format spec, JSON Schemas, Go skeleton, validator, legacy import
-- **M1** — read-only MCP (`brief/search/get/tree`) and first client integration
+- **M1** — in progress: `memoryd index` is complete (FTS5 trigram, fingerprint, generation, `--rebuild`); read-only MCP (`brief/search/get/tree`) is next
 - **M2** — write path (`add/supersede`), capture inbox, concurrency and crash tests
 - **M3** — insertion placement, gardener proposals, release hardening
 
@@ -98,7 +107,7 @@ These items are not forgotten; each has a fixed point in the roadmap.
 | Item | Do it when | Why then |
 |---|---|---|
 | Replace the provisional module path `github.com/li-ziyin/memorytree` | when the public GitHub repository is created, before the first push or tag | A module path is cheap to change now but leaks into imports, CI, and downstream references. Change it once the real URL exists, before anyone depends on it. |
-| `memoryd index` (FTS5 build and rebuild) | first task of M1, before any MCP read tool | `memory_brief`, `search`, `get`, and `tree` all read the index. Building the index without the MCP layer is independently testable and keeps M1 failures easy to localise. |
+| Incremental index updates | when the `memory_add` / `memory_supersede` write gateway lands in M2 | M1 rebuilds the whole index from a validated snapshot. Incremental updates only pay off once a single-writer gateway can keep the files and index in one transaction. |
 
 ## Data ownership
 

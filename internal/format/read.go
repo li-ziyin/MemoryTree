@@ -32,8 +32,10 @@ var (
 	ErrBodyTooBig = errors.New("body exceeds 1 MiB")
 )
 
-// Document is a parsed metadata file.
+// Document is a parsed metadata file. Raw is the exact file content; callers
+// must not modify it.
 type Document struct {
+	Raw  []byte
 	Meta []byte
 	Body []byte
 }
@@ -132,7 +134,7 @@ func Split(data []byte) (*Document, error) {
 			if len(body) > MaxBody {
 				return nil, ErrBodyTooBig
 			}
-			return &Document{Meta: meta, Body: body}, nil
+			return &Document{Raw: data, Meta: meta, Body: body}, nil
 		}
 		if lineEnd < 0 {
 			break

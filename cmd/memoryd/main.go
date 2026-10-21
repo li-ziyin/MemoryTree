@@ -9,6 +9,7 @@ import (
 	"io"
 	"os"
 
+	"github.com/li-ziyin/memorytree/internal/index"
 	"github.com/li-ziyin/memorytree/internal/initrepo"
 	"github.com/li-ziyin/memorytree/internal/legacy"
 	"github.com/li-ziyin/memorytree/internal/validate"
@@ -38,8 +39,7 @@ func run(args []string, stdout, stderr io.Writer) int {
 	case "import-legacy":
 		return runImportLegacy(args[1:], stdout, stderr)
 	case "index":
-		fmt.Fprintln(stderr, "memoryd: index is not implemented yet; it is planned for milestone M1")
-		return 3
+		return runIndex(args[1:], stdout, stderr)
 	case "version":
 		fmt.Fprintf(stdout, "memoryd %s (commit %s, built %s)\n", version, commit, date)
 		return 0
@@ -101,6 +101,68 @@ func runImportLegacy(args []string, stdout, stderr io.Writer) int {
 	return 0
 }
 
+func runIndex(args []string, stdout, stderr io.Writer) int {
+	fs := flag.NewFlagSet("index", flag.ContinueOnError)
+	fs.SetOutput(stderr)
+	rebuild := fs.Bool("rebuild", false, "rebuild the index even when the source is unchanged")
+	asJSON := fs.Bool("json", false, "emit machine-readable JSON")
+	if err := fs.Parse(args); err != nil {
+		if errors.Is(err, flag.ErrHelp) {
+			return 0
+		}
+		return 2
+	}
+	if fs.NArg() != 1 {
+		fmt.Fprintln(stderr, "usage: memoryd index [--rebuild] [--json] <data-dir>")
+		return 2
+	}
+
+	res, err := index.Build(fs.Arg(0), index.BuildOptions{Rebuild: *rebuild})
+	if err != nil {
+		if errors.Is(err, index.ErrInvalidRepository) && res != nil && res.Validation != nil {
+			if *asJSON {
+				enc := json.NewEncoder(stdout)
+				enc.SetIndent("", "  ")
+				if err := enc.Encode(res.Validation); err != nil {
+					fmt.Fprintf(stderr, "memoryd: cannot write JSON: %v\n", err)
+					return 2
+				}
+			} else {
+				for _, issue := range res.Validation.Issues {
+					fmt.Fprintf(stdout, "%-7s %-18s %s: %s\n", issue.Severity, issue.Code, issue.Path, issue.Message)
+				}
+				fmt.Fprintf(stdout, "\n%s: %d nodes, %d entries, %d errors, %d warnings; index left unchanged\n",
+					res.Validation.Root, res.Validation.Nodes, res.Validation.Entries,
+					res.Validation.Errors(), res.Validation.Warnings())
+			}
+			return 1
+		}
+		fmt.Fprintf(stderr, "memoryd: index failed: %v\n", err)
+		return 2
+	}
+
+	if *asJSON {
+		enc := json.NewEncoder(stdout)
+		enc.SetIndent("", "  ")
+		if err := enc.Encode(res); err != nil {
+			fmt.Fprintf(stderr, "memoryd: cannot write JSON: %v\n", err)
+			return 2
+		}
+		return 0
+	}
+	if res.UpToDate {
+		fmt.Fprintf(stdout, "index is up to date: %s (generation %d, %d nodes, %d entries)\n",
+			res.Path, res.Generation, res.Nodes, res.Entries)
+	} else {
+		fmt.Fprintf(stdout, "indexed %d nodes and %d entries into %s (generation %d)\n",
+			res.Nodes, res.Entries, res.Path, res.Generation)
+	}
+	if res.Warnings > 0 {
+		fmt.Fprintf(stdout, "%d validation warning(s); run memoryd validate for details\n", res.Warnings)
+	}
+	return 0
+}
+
 func runValidate(args []string, stdout, stderr io.Writer) int {
 	fs := flag.NewFlagSet("validate", flag.ContinueOnError)
 	fs.SetOutput(stderr)
@@ -151,7 +213,8 @@ Usage:
   memoryd validate [--json] <data-dir>      validate a data repository
   memoryd import-legacy --from DIR --to DATA-DIR [--agent NAME]
                                             import a flat memory directory
-  memoryd index <data-dir>                  build the search index (M1)
+  memoryd index [--rebuild] [--json] <data-dir>
+                                            build or refresh the search index
   memoryd version                           print version information
   memoryd help                              show this help
 
@@ -159,6 +222,5 @@ Exit codes:
   0 success
   1 validation errors
   2 usage or I/O error
-  3 feature not implemented yet
 `)
 }

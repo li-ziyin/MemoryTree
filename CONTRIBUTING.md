@@ -1,6 +1,6 @@
 # Contributing to MemoryTree
 
-Thanks for your interest. MemoryTree has a working format validator and CLI skeleton (M0); the MCP server and search index are in progress. Useful contributions right now include format review, threat-model review, tests against real-world memory layouts, and MCP client integration.
+Thanks for your interest. MemoryTree has a working format validator, CLI, legacy import, and SQLite FTS5 search index (M0/M1); the read-only MCP server is next. Useful contributions right now include format review, threat-model review, tests against real-world memory layouts, and MCP client integration.
 
 ## Ground rules
 
