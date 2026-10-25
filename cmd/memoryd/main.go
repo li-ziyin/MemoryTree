@@ -12,6 +12,7 @@ import (
 	"github.com/li-ziyin/memorytree/internal/index"
 	"github.com/li-ziyin/memorytree/internal/initrepo"
 	"github.com/li-ziyin/memorytree/internal/legacy"
+	"github.com/li-ziyin/memorytree/internal/mcpserver"
 	"github.com/li-ziyin/memorytree/internal/validate"
 )
 
@@ -22,10 +23,10 @@ var (
 )
 
 func main() {
-	os.Exit(run(os.Args[1:], os.Stdout, os.Stderr))
+	os.Exit(run(os.Args[1:], os.Stdin, os.Stdout, os.Stderr))
 }
 
-func run(args []string, stdout, stderr io.Writer) int {
+func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	if len(args) == 0 {
 		printUsage(stderr)
 		return 2
@@ -40,6 +41,8 @@ func run(args []string, stdout, stderr io.Writer) int {
 		return runImportLegacy(args[1:], stdout, stderr)
 	case "index":
 		return runIndex(args[1:], stdout, stderr)
+	case "mcp":
+		return runMCP(args[1:], stdin, stdout, stderr)
 	case "version":
 		fmt.Fprintf(stdout, "memoryd %s (commit %s, built %s)\n", version, commit, date)
 		return 0
@@ -163,6 +166,59 @@ func runIndex(args []string, stdout, stderr io.Writer) int {
 	return 0
 }
 
+func runMCP(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
+	fs := flag.NewFlagSet("mcp", flag.ContinueOnError)
+	fs.SetOutput(stderr)
+	if err := fs.Parse(args); err != nil {
+		if errors.Is(err, flag.ErrHelp) {
+			return 0
+		}
+		return 2
+	}
+	if fs.NArg() != 1 {
+		fmt.Fprintln(stderr, "usage: memoryd mcp <data-dir>")
+		return 2
+	}
+	dir := fs.Arg(0)
+
+	res, err := index.Build(dir, index.BuildOptions{})
+	if err != nil {
+		if errors.Is(err, index.ErrInvalidRepository) && res != nil && res.Validation != nil {
+			for _, issue := range res.Validation.Issues {
+				fmt.Fprintf(stderr, "%-7s %-18s %s: %s\n", issue.Severity, issue.Code, issue.Path, issue.Message)
+			}
+			fmt.Fprintf(stderr, "\n%s: %d errors, %d warnings; MCP server not started\n",
+				res.Validation.Root, res.Validation.Errors(), res.Validation.Warnings())
+			return 1
+		}
+		fmt.Fprintf(stderr, "memoryd: cannot prepare index: %v\n", err)
+		return 2
+	}
+
+	var warnings []string
+	if res.Warnings > 0 {
+		warnings = append(warnings, fmt.Sprintf(
+			"repository has %d validation warning(s); run memoryd validate %s for details", res.Warnings, dir))
+	}
+	ix, err := index.Open(dir)
+	if err != nil {
+		fmt.Fprintf(stderr, "memoryd: cannot open index: %v\n", err)
+		return 2
+	}
+	defer ix.Close()
+
+	srv, err := mcpserver.New(ix, mcpserver.Options{Version: version, Warnings: warnings})
+	if err != nil {
+		fmt.Fprintf(stderr, "memoryd: cannot start MCP server: %v\n", err)
+		return 2
+	}
+	if err := srv.Serve(stdin, stdout); err != nil {
+		fmt.Fprintf(stderr, "memoryd: MCP server stopped: %v\n", err)
+		return 2
+	}
+	return 0
+}
+
 func runValidate(args []string, stdout, stderr io.Writer) int {
 	fs := flag.NewFlagSet("validate", flag.ContinueOnError)
 	fs.SetOutput(stderr)
@@ -215,6 +271,7 @@ Usage:
                                             import a flat memory directory
   memoryd index [--rebuild] [--json] <data-dir>
                                             build or refresh the search index
+  memoryd mcp <data-dir>                    serve read-only MCP over stdio
   memoryd version                           print version information
   memoryd help                              show this help
 

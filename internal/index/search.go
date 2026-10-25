@@ -25,6 +25,9 @@ type SearchOptions struct {
 	Query string
 	// NodeID restricts results to entries directly under one node.
 	NodeID string
+	// SubtreePath restricts results to entries under the node at this slug
+	// path or any of its descendants. The root path "." matches everything.
+	SubtreePath string
 	// Types restricts results to the given entry types when non-empty.
 	Types []string
 	// Statuses restricts results when non-empty; otherwise only active
@@ -161,6 +164,10 @@ func filterConditions(opts SearchOptions) ([]string, []any) {
 		conditions = append(conditions, "e.node_id = ?")
 		args = append(args, opts.NodeID)
 	}
+	if opts.SubtreePath != "" && opts.SubtreePath != "." {
+		conditions = append(conditions, `(e.node_path = ? OR e.node_path LIKE ? ESCAPE '\')`)
+		args = append(args, opts.SubtreePath, escapeLike(opts.SubtreePath)+"/%")
+	}
 	for _, tag := range opts.Tags {
 		conditions = append(conditions,
 			"EXISTS (SELECT 1 FROM entry_tags t WHERE t.entry_id = e.id AND t.tag = ?)")
@@ -217,6 +224,9 @@ func likeConditions(tokens []string) ([]string, []any) {
 }
 
 func likePattern(s string) string {
-	escaped := strings.NewReplacer(`\`, `\\`, `%`, `\%`, `_`, `\_`).Replace(s)
-	return "%" + escaped + "%"
+	return "%" + escapeLike(s) + "%"
+}
+
+func escapeLike(s string) string {
+	return strings.NewReplacer(`\`, `\\`, `%`, `\%`, `_`, `\_`).Replace(s)
 }

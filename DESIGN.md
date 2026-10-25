@@ -1,6 +1,6 @@
 # MemoryTree 设计文档
 
-- 状态：M0 已完成（2026-10-20）；M1 进行中：`memoryd index` 已完成（2026-10-21），只读 MCP 待开始
+- 状态：M1 实现完成（2026-10-21）：`memoryd index` 与只读 MCP（`brief/search/get/tree`）；检索验收（20 问对比基线）与 M2 写路径待开始
 - 工作名：MemoryTree；二进制名：`memoryd`
 - 语言与形态：Go，单二进制、默认 stdio、无后台常驻服务
 - 数据目录：独立 git 仓库；本机开发数据先定 `E:\MemoryTreeData`，其他用户默认 `~/.memorytree`
@@ -81,7 +81,7 @@ gardener 是一个周期性任务，可以由任意 Agent 执行。它读取节�
 ### D7：Go 单二进制，代码与数据分离
 
 - Go 单二进制，无 Node/Python 运行时；目标二进制约 30MB、常驻内存 < 50MB、1 万条记忆检索 p95 < 50ms。
-- 依赖控制在个位数，优先官方 MCP Go SDK、纯 Go SQLite 驱动、YAML 解析器、UUID、文件锁。
+- 依赖控制在个位数：手写 MCP JSON-RPC 2.0 stdio（不引入 SDK）、纯 Go SQLite 驱动、YAML 解析器、UUID、文件锁。
 - 代码仓库与用户数据仓库分离。代码 Apache-2.0；用户记忆数据归用户所有。
 - 发布提供 Windows/macOS/Linux 构建、校验和、签名、SBOM；CI 跑测试、静态检查和依赖漏洞扫描。
 
@@ -175,6 +175,8 @@ E:\MemoryTreeData\
 
 `memory_propose_move` 等 gardener 工具放到 V1.5，避免第一版出现自动改树能力。
 
+实现方式：手写 JSON-RPC 2.0 over stdio（一行一条 JSON），不引入 MCP SDK；支持 `initialize`、`ping`、`tools/list`、`tools/call`，通知不返回响应，不支持批量请求。协议版本接受 2024-11-05、2025-03-26、2025-06-18，未知版本回落到 2025-06-18。所有工具标注 `readOnlyHint`。
+
 ### 5.2 `memory_brief`
 
 输入：`task`（必填）、`project`（节点 ID 或 slug 路径，可选）、`budget_tokens`（默认 1200）。
@@ -188,6 +190,8 @@ E:\MemoryTreeData\
 5. 警告（被取代的旧结论、敏感级别、索引过期）
 
 只返回摘要和 ID，不返回全文；Agent 需要时再 `memory_get`。服务端只做确定性拼装，不做生成。
+
+预算按分区轮转取用：每轮每个分区最多加入一条，避免靠前的分区吃光预算。`tokens_estimated` 是近似值（ASCII 计 0.25 token，非 ASCII 计 1 token），只统计 `data`，不计 envelope 元数据；预算不足时返回 `truncated` 警告。
 
 ### 5.3 响应与错误
 
@@ -205,12 +209,12 @@ E:\MemoryTreeData\
 }
 ```
 
-记忆内容在返回时标注 `"trust": "untrusted-history"`，提醒客户端这是历史数据，不是可执行指令。错误使用稳定错误码（如 `MEMORY_NOT_FOUND`、`INVALID_FRONTMATTER`、`REPO_LOCKED`、`FORMAT_UNSUPPORTED`），并附带可操作的修复建议。
+记忆内容在返回时标注 `"trust": "untrusted-history"`，提醒客户端这是历史数据，不是可执行指令。错误使用稳定错误码（如 `MEMORY_NOT_FOUND`、`NODE_NOT_FOUND`、`INVALID_ARGUMENTS`、`INDEX_ERROR`），并附带可操作的修复建议；工具错误通过 MCP 的 `isError: true` 返回，同时在 `structuredContent.error` 中给出 `code`、`message`、`suggestion`。
 
 ### 5.4 并发与一致性
 
-- 读：SQLite WAL，多进程可并发读；索引带 `generation`，过期时只读工具自动重建或返回警告。
-- 写：跨进程文件锁串行化；写文件用同目录临时文件 + fsync + rename；索引更新与 git commit 在同一临界区内。
+- 读：SQLite WAL，多进程可并发读；索引带 `generation`。只读 MCP 在启动时校验仓库并按文件指纹刷新索引，会话期间使用该启动快照；外部手改文件后需重启服务端。损坏或 schema 不兼容的索引不会自动重建，服务端拒绝启动并提示 `memoryd index --rebuild`。
+- 写：跨进程文件锁串行化；写文件用同目录临时文件 + fsync + rename；索引更新与 git commit 在同一临界区内（M2）。
 - 崩溃恢复：写文件成功但 commit 失败时保留 dirty tree，`memoryd doctor` 检测并补提交；不丢数据，不自动 reset。
 - 索引损坏：`memoryd index --rebuild` 从文件重建；源文件永远优先。
 
@@ -283,7 +287,7 @@ V1 只生成提案，不自动应用。等真实语料证明树需要频繁调�
 前置（已于 2026-10-20 完成）：源码仓与数据仓各完成一次 `git init` 和初始提交。数据仓的初始提交必须在 `memoryd validate` 全绿之后，用来冻结 M0 基线；M1 及之后的索引、写入才有可审计的起点。
 
 1. `memoryd index`（已完成 2026-10-21）：FTS5 trigram 构建与 `--rebuild`，源文件 fingerprint 不变时跳过，重建时 generation 递增；已独立验收，不依赖 MCP。
-2. 只读 MCP：`memory_brief / search / get / tree`，先接 Qoder。所有读工具依赖第 1 步的索引。
+2. 只读 MCP（已完成 2026-10-21）：`memory_brief / search / get / tree`，手写 JSON-RPC 2.0 stdio；启动时校验并刷新索引，坏索引要求显式 `--rebuild`。所有读工具依赖第 1 步的索引。真实数据仓冒烟通过；接入 Qoder 客户端与 20 问验收待做。
 
 - FTS5 trigram 中文检索可用；索引可重建。
 - 验收：20 个真实问题，对比 `MEMORY.md + grep` 基线，记录命中率、token 消耗和人工评分。

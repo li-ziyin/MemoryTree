@@ -2,7 +2,7 @@
 
 Local-first, file-based memory for AI agents: a self-organizing tree of Markdown memories shared across ZCode, OpenCode, Qoder, and any MCP-capable client.
 
-> **Status: M0 complete; M1 in progress.** The v1 format, a Go validator with stable error codes, repository initialization, legacy import, and the disposable SQLite FTS5 search index are working. The validated M0 source and data baselines are committed to git. The read-only MCP server is next.
+> **Status: M1 feature-complete.** The v1 format, a Go validator with stable error codes, repository initialization, legacy import, the disposable SQLite FTS5 search index, and the read-only MCP server are working. The 20-question retrieval benchmark against the flat-memory baseline and the write path are next.
 
 ## Why
 
@@ -41,7 +41,7 @@ MemoryTree separates the shared memory layer from each agent's native memory:
 
 ## Quick start
 
-Requires Go 1.25 or newer and Git 2.30+ (Git is not used by `validate` or `index` yet).
+Requires Go 1.25 or newer and Git 2.30+ (Git is not used by `validate`, `index`, or `mcp` yet).
 
 ```sh
 go build -o bin/memoryd ./cmd/memoryd
@@ -61,11 +61,29 @@ go build -o bin/memoryd ./cmd/memoryd
 
 # Force a full rebuild, for example after an index schema change or corruption
 ./bin/memoryd index --rebuild ~/.memorytree
+
+# Serve the read-only MCP server over stdio
+./bin/memoryd mcp ~/.memorytree
+```
+
+An MCP client only needs a command and arguments:
+
+```json
+{
+  "mcpServers": {
+    "memorytree": {
+      "command": "<absolute-path-to-memoryd>",
+      "args": ["mcp", "<absolute-path-to-data-dir>"]
+    }
+  }
+}
 ```
 
 On Windows, use paths such as `E:\MemoryTreeData`. `memoryd validate --json` and `memoryd index --json` emit machine-readable results. Exit codes: `0` success, `1` validation errors, `2` usage or I/O error.
 
 The index lives at `<data-dir>/.index/index.sqlite`. It is derived data: deleting it loses nothing. A normal `memoryd index` is a no-op when the managed files have not changed; any source change triggers a full rebuild in one SQLite transaction and increments the stored `generation`. An unreadable, corrupt, or schema-incompatible index is left in place and reported; rerun with `--rebuild` to replace it. The index contains full entry text, so `memoryd init` gitignores `.index/`; treat it as a local cache.
+
+`memoryd mcp` validates the repository and refreshes the index at startup, then serves `memory_brief`, `memory_search`, `memory_get`, and `memory_tree` as read-only tools. It writes only inside `.index/`; memory files are never changed. The server works from its startup snapshot, so restart it after editing memory files by hand. A corrupt or schema-incompatible index is not rebuilt automatically: the server refuses to start and reports that `memoryd index --rebuild` is required. Every response carries `index_generation` and warnings, and memory text is labelled `trust: untrusted-history`.
 
 ## Repository layout
 
@@ -78,6 +96,7 @@ internal/
   index/                SQLite FTS5 build, rebuild, and search
   initrepo/             data repository initialization
   legacy/               flat legacy memory import
+  mcpserver/            read-only MCP over JSON-RPC 2.0 stdio
   model/                v1 metadata objects
   validate/             repository-wide invariant checks
 spec/                   memory format v1 + JSON Schemas
@@ -96,8 +115,8 @@ The user data repository is separate. The default is `~/.memorytree`; it can be 
 ## Roadmap
 
 - **M0** — complete: format spec, JSON Schemas, Go skeleton, validator, legacy import
-- **M1** — in progress: `memoryd index` is complete (FTS5 trigram, fingerprint, generation, `--rebuild`); read-only MCP (`brief/search/get/tree`) is next
-- **M2** — write path (`add/supersede`), capture inbox, concurrency and crash tests
+- **M1** — feature-complete: FTS5 trigram index (fingerprint, generation, `--rebuild`) and the read-only MCP server (`brief/search/get/tree`); the 20-question retrieval benchmark against `MEMORY.md` + grep is pending
+- **M2** — next: write path (`add/supersede`), capture inbox, concurrency and crash tests
 - **M3** — insertion placement, gardener proposals, release hardening
 
 ## Deliberately deferred
