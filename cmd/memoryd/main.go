@@ -9,6 +9,7 @@ import (
 	"io"
 	"os"
 	"strconv"
+	"strings"
 
 	"github.com/li-ziyin/memorytree/internal/bench"
 	"github.com/li-ziyin/memorytree/internal/inbox"
@@ -16,6 +17,8 @@ import (
 	"github.com/li-ziyin/memorytree/internal/initrepo"
 	"github.com/li-ziyin/memorytree/internal/legacy"
 	"github.com/li-ziyin/memorytree/internal/mcpserver"
+	"github.com/li-ziyin/memorytree/internal/model"
+	"github.com/li-ziyin/memorytree/internal/mount"
 	"github.com/li-ziyin/memorytree/internal/store"
 	"github.com/li-ziyin/memorytree/internal/validate"
 )
@@ -51,6 +54,8 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		return runBench(args[1:], stdout, stderr)
 	case "add":
 		return runAdd(args[1:], stdin, stdout, stderr)
+	case "suggest-mount":
+		return runSuggestMount(args[1:], stdin, stdout, stderr)
 	case "supersede":
 		return runSupersede(args[1:], stdout, stderr)
 	case "inbox":
@@ -328,6 +333,91 @@ func runAdd(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	return 0
 }
 
+func runSuggestMount(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
+	fs := flag.NewFlagSet("suggest-mount", flag.ContinueOnError)
+	fs.SetOutput(stderr)
+	asJSON := fs.Bool("json", false, "emit machine-readable JSON")
+	exclude := fs.String("exclude-entry", "", "entry UUIDv7 left out of scoring (leave-one-out evaluation)")
+	limit := fs.Int("limit", 5, "number of candidates to return")
+	if err := fs.Parse(args); err != nil {
+		if errors.Is(err, flag.ErrHelp) {
+			return 0
+		}
+		return 2
+	}
+	if fs.NArg() != 1 {
+		fmt.Fprintln(stderr, "usage: memoryd suggest-mount [--json] [--exclude-entry ID] [--limit N] <data-dir> < entry.json")
+		return 2
+	}
+	data, err := io.ReadAll(stdin)
+	if err != nil {
+		fmt.Fprintf(stderr, "memoryd: cannot read input: %v\n", err)
+		return 2
+	}
+	var in store.EntryInput
+	if err := json.Unmarshal(data, &in); err != nil {
+		fmt.Fprintf(stderr, "memoryd: invalid entry JSON: %v\n", err)
+		return 2
+	}
+	title := strings.TrimSpace(in.Title)
+	if title == "" {
+		fmt.Fprintln(stderr, "memoryd: title is required")
+		return 2
+	}
+	switch in.Type {
+	case "", model.TypeUser, model.TypeFeedback, model.TypeProject, model.TypeReference:
+	default:
+		fmt.Fprintln(stderr, "memoryd: type must be user, feedback, project, or reference")
+		return 2
+	}
+	if *limit < 1 {
+		fmt.Fprintln(stderr, "memoryd: --limit must be at least 1")
+		return 2
+	}
+
+	res, snap, err := validate.ValidateWithSnapshot(fs.Arg(0))
+	if err != nil {
+		fmt.Fprintf(stderr, "memoryd: cannot read repository: %v\n", err)
+		return 2
+	}
+	if !res.OK() {
+		for _, issue := range res.Issues {
+			fmt.Fprintf(stdout, "%-7s %-18s %s: %s\n", issue.Severity, issue.Code, issue.Path, issue.Message)
+		}
+		fmt.Fprintf(stderr, "memoryd: repository has %d validation errors\n", res.Errors())
+		return 1
+	}
+
+	tags := make([]string, 0, len(in.TagsDelta))
+	for _, tag := range in.TagsDelta {
+		if tag = strings.ToLower(strings.TrimSpace(tag)); tag != "" {
+			tags = append(tags, tag)
+		}
+	}
+	if in.Type == "" {
+		in.Type = model.TypeProject
+	}
+	suggestions := mount.Suggest(mount.FromSnapshot(snap, *exclude),
+		mount.Query{Type: in.Type, Title: title, Summary: in.Summary, Tags: tags}, *limit)
+
+	if *asJSON {
+		enc := json.NewEncoder(stdout)
+		enc.SetIndent("", "  ")
+		if err := enc.Encode(map[string]any{"suggestions": suggestions, "excluded": *exclude}); err != nil {
+			fmt.Fprintf(stderr, "memoryd: cannot write JSON: %v\n", err)
+			return 2
+		}
+		return 0
+	}
+	for i, sugg := range suggestions {
+		fmt.Fprintf(stdout, "%d. %-6.3f %s (%s)\n", i+1, sugg.Score, sugg.Path, sugg.Kind)
+		for _, reason := range sugg.Reasons {
+			fmt.Fprintf(stdout, "   - %s\n", reason)
+		}
+	}
+	return 0
+}
+
 func runSupersede(args []string, stdout, stderr io.Writer) int {
 	fs := flag.NewFlagSet("supersede", flag.ContinueOnError)
 	fs.SetOutput(stderr)
@@ -469,6 +559,8 @@ Usage:
                                             rerun retrieval questions and
                                             check first hits
   memoryd add <data-dir> < entry.json       write one memory entry
+  memoryd suggest-mount [--json] [--exclude-entry ID] [--limit N] <data-dir> < entry.json
+                                            rank host nodes for a new entry
   memoryd supersede --old ID --by ID <data-dir>
                                             link an existing supersede pair
   memoryd inbox [--file PATH] [--source NAME] [--list] <data-dir>

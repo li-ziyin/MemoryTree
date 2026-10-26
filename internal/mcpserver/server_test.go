@@ -164,15 +164,16 @@ func TestInitializeAndToolsList(t *testing.T) {
 
 	listResult := mustMap(t, responses[1]["result"], "tools/list result")
 	tools := mustSlice(t, listResult["tools"], "tools")
-	if len(tools) != 6 {
-		t.Fatalf("got %d tools, want 6", len(tools))
+	if len(tools) != 7 {
+		t.Fatalf("got %d tools, want 7", len(tools))
 	}
 	want := map[string]bool{
 		"memory_brief": false, "memory_search": false, "memory_get": false, "memory_tree": false,
-		"memory_add": false, "memory_supersede": false,
+		"memory_suggest_mount": false, "memory_add": false, "memory_supersede": false,
 	}
 	readOnly := map[string]bool{
 		"memory_brief": true, "memory_search": true, "memory_get": true, "memory_tree": true,
+		"memory_suggest_mount": true,
 		"memory_add": false, "memory_supersede": false,
 	}
 	for _, raw := range tools {

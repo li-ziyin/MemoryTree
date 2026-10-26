@@ -285,6 +285,8 @@ func (s *Server) callTool(ctx context.Context, raw json.RawMessage) (any, *rpcEr
 		env, terr = s.memoryGet(ctx, params.Arguments)
 	case "memory_tree":
 		env, terr = s.memoryTree(ctx, params.Arguments)
+	case "memory_suggest_mount":
+		env, terr = s.memorySuggestMount(ctx, params.Arguments)
 	case "memory_add":
 		env, terr = s.memoryAdd(ctx, params.Arguments)
 	case "memory_supersede":
