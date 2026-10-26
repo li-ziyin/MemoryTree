@@ -50,3 +50,6 @@ title 1–200 rune；summary 1–500 rune；body ≤ 1 MiB（V-CONTENT-1/3）；
 ## 执行记录
 
 - 计划撰写：2026-10-27。执行随任务逐条更新本节。
+- T1–T7 全部完成（`213d5e8` → `34e41ff`），T8 完成（真实仓 40 条、bench 21/21、验收文档 [../../m2-acceptance.md](../../m2-acceptance.md)）。
+- 执行中发现并修复四个计划外问题：碰撞后缀用 UUID 时间戳头导致同分钟同标题互相覆盖；`source.kind` 未按枚举校验；supersede 链未按 V-SUP-4 扁平化；提交先于校验的顺序风险。详见验收文档「开发中发现并修复的问题」。
+- 设计偏差：D5 锁竞争在 Windows 上可能表现为共享冲突而非 ErrExist，已按竞争处理（lock.go）；mimosa 报 main.go 跨文件污点（中危），经用户确认为 CLI 设计内行为。
