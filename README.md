@@ -46,6 +46,9 @@ Requires Go 1.25 or newer and Git 2.30+ (Git is not used by `validate`, `index`,
 ```sh
 go build -o bin/memoryd ./cmd/memoryd
 
+# Run the full quality gate used by CI (gofmt, vet, tests, stamped build)
+bash scripts/check.sh
+
 # Create a data repository (separate from this source tree)
 ./bin/memoryd init --title "My Memory" ~/.memorytree
 

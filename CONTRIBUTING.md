@@ -35,6 +35,9 @@ go vet ./...
 gofmt -l .
 ```
 
+Run `bash scripts/check.sh` before committing; CI runs the same script
+(gofmt, vet, tests, and a version-stamped build) on every push.
+
 The example repository must stay valid:
 
 ```bash
