@@ -1,6 +1,6 @@
 # MemoryTree 设计文档
 
-- 状态：M1 实现完成，检索验收复测通过（2026-10-25：20/20 完整与首条命中；每题独立会话 14,723 vs 基线 67,796 token，见 [docs/m1-acceptance.md](docs/m1-acceptance.md)）；人工评分 4.95 已确认（2026-10-26），M2 写路径待开始
+- 状态：M1 实现完成，检索验收复测通过（2026-10-25：20/20 完整与首条命中；每题独立会话 14,723 vs 基线 67,796 token，见 [docs/m1-acceptance.md](docs/m1-acceptance.md)）；人工评分 4.95 已确认（2026-10-26）。工程加固完成（2026-10-26）：CI 三平台矩阵与 schema 一致性检查、解析层直接测试与 fuzz、规模基线（[docs/perf-baseline.md](docs/perf-baseline.md)）、`memoryd bench` 检索回归门、短词 rune 拆分 FTS（索引 schema v2）、MCP 过期警告与请求超时。M2 写路径待开始
 - 工作名：MemoryTree；二进制名：`memoryd`
 - 语言与形态：Go，单二进制、默认 stdio、无后台常驻服务
 - 数据目录：独立 git 仓库；本机开发数据先定 `E:\MemoryTreeData`，其他用户默认 `~/.memorytree`

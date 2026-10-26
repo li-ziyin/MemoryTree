@@ -121,8 +121,8 @@ The user data repository is separate. The default is `~/.memorytree`; it can be 
 ## Roadmap
 
 - **M0** — complete: format spec, JSON Schemas, Go skeleton, validator, legacy import
-- **M1** — feature-complete and benchmarked: FTS5 trigram index (fingerprint, generation, `--rebuild`), the read-only MCP server (`brief/search/get/tree`), and the 20-question benchmark against `MEMORY.md` + grep. Rerun on 2026-10-25 after short-query ranking and excerpt retrieval: 20/20 complete and first-hit answers, 14,723 vs 67,796 tokens per task, near parity when `MEMORY.md` is amortized
-- **M2** — next: write path (`add/supersede`), capture inbox, import the three newer memories, concurrency and crash tests
+- **M1** — feature-complete and benchmarked: FTS5 trigram index (fingerprint, generation, `--rebuild`), the read-only MCP server (`brief/search/get/tree`), and the 20-question benchmark against `MEMORY.md` + grep. Rerun on 2026-10-25 after short-query ranking and excerpt retrieval: 20/20 complete and first-hit answers, 14,723 vs 67,796 tokens per task, near parity when `MEMORY.md` is amortized. Engineering hardening landed on 2026-10-26: cross-platform CI with a schema consistency job, direct parser tests and fuzz seeds, a scale baseline ([docs/perf-baseline.md](docs/perf-baseline.md)), the `memoryd bench` retrieval regression gate, a rune-split FTS index for short CJK queries (schema v2), and stale-index warnings with request deadlines in the MCP server
+- **M2** — next: write path (`add/supersede`), capture inbox, import the three newer memories, concurrency and crash tests; ranking and index changes are gated by `memoryd bench` and [docs/perf-baseline.md](docs/perf-baseline.md)
 - **M3** — insertion placement, gardener proposals, release hardening
 
 ## Deliberately deferred
