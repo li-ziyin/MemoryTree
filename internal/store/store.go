@@ -74,6 +74,21 @@ type AddResult struct {
 // now is overridable in tests.
 var now = func() time.Time { return time.Now().UTC() }
 
+// timeFormat is the canonical timestamp form written into frontmatter.
+const timeFormat = time.RFC3339
+
+// validateSnapshot returns a clean snapshot or ErrInvalidRepository.
+func validateSnapshot(root string) (*validate.Result, *validate.Snapshot, error) {
+	res, snap, err := validate.ValidateWithSnapshot(root)
+	if err != nil {
+		return nil, nil, err
+	}
+	if !res.OK() {
+		return res, nil, fmt.Errorf("%w: %d errors; run memoryd validate %s", ErrInvalidRepository, res.Errors(), root)
+	}
+	return res, snap, nil
+}
+
 // AddEntry validates the input, writes the entry file atomically, rewrites
 // superseded entries, commits to git, and refreshes the index — all under
 // the single-writer lock. The repository must already validate clean; the
@@ -90,12 +105,9 @@ func AddEntry(dataDir string, in EntryInput) (*AddResult, error) {
 	}
 	defer lock.release()
 
-	res, snap, err := validate.ValidateWithSnapshot(root)
+	_, snap, err := validateSnapshot(root)
 	if err != nil {
 		return nil, err
-	}
-	if !res.OK() {
-		return nil, fmt.Errorf("%w: %d errors; run memoryd validate %s", ErrInvalidRepository, res.Errors(), root)
 	}
 
 	node := resolveNode(snap, in.Node)
@@ -119,6 +131,11 @@ func AddEntry(dataDir string, in EntryInput) (*AddResult, error) {
 	path, err := writeEntryFile(memDir, entry, []byte(in.Body))
 	if err != nil {
 		return nil, err
+	}
+	if len(entry.Supersedes) > 0 {
+		if _, err := supersedeOldEntries(root, snap, entry.ID, entry.Supersedes); err != nil {
+			return nil, err
+		}
 	}
 	return &AddResult{ID: entry.ID, Path: path}, nil
 }
