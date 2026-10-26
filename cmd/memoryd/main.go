@@ -15,6 +15,7 @@ import (
 	"github.com/li-ziyin/memorytree/internal/initrepo"
 	"github.com/li-ziyin/memorytree/internal/legacy"
 	"github.com/li-ziyin/memorytree/internal/mcpserver"
+	"github.com/li-ziyin/memorytree/internal/store"
 	"github.com/li-ziyin/memorytree/internal/validate"
 )
 
@@ -47,6 +48,10 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		return runMCP(args[1:], stdin, stdout, stderr)
 	case "bench":
 		return runBench(args[1:], stdout, stderr)
+	case "add":
+		return runAdd(args[1:], stdin, stdout, stderr)
+	case "supersede":
+		return runSupersede(args[1:], stdout, stderr)
 	case "version":
 		fmt.Fprintf(stdout, "memoryd %s (commit %s, built %s)\n", version, commit, date)
 		return 0
@@ -280,6 +285,78 @@ func runBench(args []string, stdout, stderr io.Writer) int {
 	return 0
 }
 
+func runAdd(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
+	fs := flag.NewFlagSet("add", flag.ContinueOnError)
+	fs.SetOutput(stderr)
+	if err := fs.Parse(args); err != nil {
+		if errors.Is(err, flag.ErrHelp) {
+			return 0
+		}
+		return 2
+	}
+	if fs.NArg() != 1 {
+		fmt.Fprintln(stderr, "usage: memoryd add <data-dir> < entry.json")
+		return 2
+	}
+	data, err := io.ReadAll(stdin)
+	if err != nil {
+		fmt.Fprintf(stderr, "memoryd: cannot read input: %v\n", err)
+		return 2
+	}
+	var in store.EntryInput
+	if err := json.Unmarshal(data, &in); err != nil {
+		fmt.Fprintf(stderr, "memoryd: invalid entry JSON: %v\n", err)
+		return 2
+	}
+	res, err := store.AddEntry(fs.Arg(0), in)
+	if err != nil {
+		fmt.Fprintf(stderr, "memoryd: add failed: %v\n", err)
+		if errors.Is(err, store.ErrWriteLocked) {
+			fmt.Fprintln(stderr, "another write is in progress; retry shortly")
+		}
+		return 1
+	}
+	enc := json.NewEncoder(stdout)
+	enc.SetIndent("", "  ")
+	if err := enc.Encode(res); err != nil {
+		fmt.Fprintf(stderr, "memoryd: cannot write JSON: %v\n", err)
+		return 2
+	}
+	return 0
+}
+
+func runSupersede(args []string, stdout, stderr io.Writer) int {
+	fs := flag.NewFlagSet("supersede", flag.ContinueOnError)
+	fs.SetOutput(stderr)
+	oldID := fs.String("old", "", "entry UUIDv7 that becomes superseded")
+	byID := fs.String("by", "", "entry UUIDv7 that supersedes it")
+	if err := fs.Parse(args); err != nil {
+		if errors.Is(err, flag.ErrHelp) {
+			return 0
+		}
+		return 2
+	}
+	if fs.NArg() != 1 || *oldID == "" || *byID == "" {
+		fmt.Fprintln(stderr, "usage: memoryd supersede --old ID --by ID <data-dir>")
+		return 2
+	}
+	res, err := store.SupersedeEntry(fs.Arg(0), *oldID, *byID)
+	if err != nil {
+		fmt.Fprintf(stderr, "memoryd: supersede failed: %v\n", err)
+		if errors.Is(err, store.ErrWriteLocked) {
+			fmt.Fprintln(stderr, "another write is in progress; retry shortly")
+		}
+		return 1
+	}
+	enc := json.NewEncoder(stdout)
+	enc.SetIndent("", "  ")
+	if err := enc.Encode(res); err != nil {
+		fmt.Fprintf(stderr, "memoryd: cannot write JSON: %v\n", err)
+		return 2
+	}
+	return 0
+}
+
 func runValidate(args []string, stdout, stderr io.Writer) int {
 	fs := flag.NewFlagSet("validate", flag.ContinueOnError)
 	fs.SetOutput(stderr)
@@ -336,6 +413,9 @@ Usage:
   memoryd bench [--json] <data-dir> <questions.jsonl>
                                             rerun retrieval questions and
                                             check first hits
+  memoryd add <data-dir> < entry.json       write one memory entry
+  memoryd supersede --old ID --by ID <data-dir>
+                                            link an existing supersede pair
   memoryd version                           print version information
   memoryd help                              show this help
 

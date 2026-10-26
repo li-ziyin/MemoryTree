@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -66,6 +67,8 @@ func TestRunUsageErrors(t *testing.T) {
 		{"import-legacy missing flags", []string{"import-legacy"}},
 		{"index missing dir", []string{"index"}},
 		{"mcp missing dir", []string{"mcp"}},
+		{"add missing dir", []string{"add"}},
+		{"supersede missing flags", []string{"supersede"}},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -150,5 +153,126 @@ func TestRunBenchExitCodes(t *testing.T) {
 
 	if code := run([]string{"bench", dir}, strings.NewReader(""), &bytes.Buffer{}, &bytes.Buffer{}); code != 2 {
 		t.Fatalf("bench usage code = %d, want 2", code)
+	}
+}
+
+// writeRepo initializes a data repository with a frozen git baseline, the
+// shape the write path requires.
+func writeRepo(t *testing.T) string {
+	t.Helper()
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git is not installed; write-path tests require it")
+	}
+	dir := t.TempDir()
+	if _, err := initrepo.Init(initrepo.Options{Root: dir, Title: "Test"}); err != nil {
+		t.Fatal(err)
+	}
+	for _, args := range [][]string{
+		{"init", "-q"},
+		{"config", "user.email", "test@example.com"},
+		{"config", "user.name", "Test"},
+		{"config", "commit.gpgsign", "false"},
+		{"add", "-A"},
+		{"commit", "-q", "-m", "init: freeze baseline"},
+	} {
+		cmd := exec.Command("git", append([]string{"-C", dir}, args...)...)
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %v: %s", args, err, out)
+		}
+	}
+	return dir
+}
+
+const addJSON = `{
+  "type": "project",
+  "title": "CLI 写入条目",
+  "summary": "通过 memoryd add 写入的条目。",
+  "body": "正文由 stdin JSON 提供。\n",
+  "tags_delta": ["cli"],
+  "source": {"agent": "zcode", "kind": "conversation"}
+}`
+
+func TestRunAddAndSupersede(t *testing.T) {
+	dir := writeRepo(t)
+
+	var stdout, stderr bytes.Buffer
+	code := run([]string{"add", dir}, strings.NewReader(addJSON), &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("add code = %d, stderr: %s", code, stderr.String())
+	}
+	var first struct {
+		ID string `json:"id"`
+	}
+	if err := json.Unmarshal(stdout.Bytes(), &first); err != nil || first.ID == "" {
+		t.Fatalf("add stdout = %s (%v)", stdout.String(), err)
+	}
+
+	// The entry is committed and visible through the read path.
+	if out, err := exec.Command("git", "-C", dir, "status", "--porcelain").CombinedOutput(); err != nil || strings.TrimSpace(string(out)) != "" {
+		t.Errorf("git status not clean: %v: %s", err, out)
+	}
+	if code := run([]string{"validate", dir}, strings.NewReader(""), io.Discard, &bytes.Buffer{}); code != 0 {
+		t.Fatalf("validate after add = %d", code)
+	}
+
+	stdout.Reset()
+	stderr.Reset()
+	code = run([]string{"add", dir}, strings.NewReader(`{"type":"project","title":"CLI 写入条目 v2","summary":"取代版。","body":"x\n","source":{"agent":"zcode","kind":"conversation"},"supersedes":["`+first.ID+`"]}`), &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("add v2 code = %d, stderr: %s", code, stderr.String())
+	}
+	var second struct {
+		ID string `json:"id"`
+	}
+	if err := json.Unmarshal(stdout.Bytes(), &second); err != nil || second.ID == "" {
+		t.Fatalf("add v2 stdout = %s (%v)", stdout.String(), err)
+	}
+
+	// A third entry exercises the standalone supersede command.
+	stdout.Reset()
+	stderr.Reset()
+	code = run([]string{"add", dir}, strings.NewReader(`{"type":"project","title":"独立条目","summary":"用来测 supersede 命令。","body":"x\n","source":{"agent":"zcode","kind":"conversation"}}`), &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("add third code = %d, stderr: %s", code, stderr.String())
+	}
+	var third struct {
+		ID string `json:"id"`
+	}
+	if err := json.Unmarshal(stdout.Bytes(), &third); err != nil {
+		t.Fatal(err)
+	}
+
+	stdout.Reset()
+	stderr.Reset()
+	code = run([]string{"supersede", "--old", second.ID, "--by", third.ID, dir}, strings.NewReader(""), &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("supersede code = %d, stderr: %s", code, stderr.String())
+	}
+	if !strings.Contains(stdout.String(), third.ID) {
+		t.Fatalf("supersede stdout = %s", stdout.String())
+	}
+	if code := run([]string{"validate", dir}, strings.NewReader(""), io.Discard, &bytes.Buffer{}); code != 0 {
+		t.Fatalf("validate after supersede = %d", code)
+	}
+}
+
+func TestRunAddUsageAndValidation(t *testing.T) {
+	dir := writeRepo(t)
+
+	if code := run([]string{"add"}, strings.NewReader(addJSON), io.Discard, &bytes.Buffer{}); code != 2 {
+		t.Fatalf("add usage code = %d, want 2", code)
+	}
+	if code := run([]string{"add", dir}, strings.NewReader("{not json"), io.Discard, &bytes.Buffer{}); code != 2 {
+		t.Fatalf("add bad json code = %d, want 2", code)
+	}
+	var stderr bytes.Buffer
+	if code := run([]string{"add", dir}, strings.NewReader(`{"type":"project","title":"","summary":"空标题。","body":"x","source":{"agent":"z","kind":"c"}}`), io.Discard, &stderr); code != 1 {
+		t.Fatalf("add invalid input code = %d, want 1", code)
+	}
+	if !strings.Contains(stderr.String(), "V-CONTENT-1") {
+		t.Errorf("stderr = %s", stderr.String())
+	}
+	if code := run([]string{"supersede", "--old", "x", dir}, strings.NewReader(""), io.Discard, &bytes.Buffer{}); code != 2 {
+		t.Fatalf("supersede usage code = %d, want 2", code)
 	}
 }
