@@ -12,6 +12,7 @@ import (
 	"strings"
 
 	"github.com/li-ziyin/memorytree/internal/bench"
+	"github.com/li-ziyin/memorytree/internal/gardener"
 	"github.com/li-ziyin/memorytree/internal/inbox"
 	"github.com/li-ziyin/memorytree/internal/index"
 	"github.com/li-ziyin/memorytree/internal/initrepo"
@@ -60,6 +61,8 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		return runSupersede(args[1:], stdout, stderr)
 	case "inbox":
 		return runInbox(args[1:], stdin, stdout, stderr)
+	case "gardener":
+		return runGardener(args[1:], stdin, stdout, stderr)
 	case "version":
 		fmt.Fprintf(stdout, "memoryd %s (commit %s, built %s)\n", version, commit, date)
 		return 0
@@ -502,6 +505,148 @@ func runInbox(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	return 0
 }
 
+func runGardener(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
+	if len(args) == 0 {
+		fmt.Fprintln(stderr, "usage: memoryd gardener <data|apply> ...")
+		return 2
+	}
+	switch args[0] {
+	case "data":
+		return runGardenerData(args[1:], stdout, stderr)
+	case "apply":
+		return runGardenerApply(args[1:], stdin, stdout, stderr)
+	default:
+		fmt.Fprintf(stderr, "memoryd: unknown gardener subcommand %q\n", args[0])
+		fmt.Fprintln(stderr, "usage: memoryd gardener <data|apply> ...")
+		return 2
+	}
+}
+
+func runGardenerData(args []string, stdout, stderr io.Writer) int {
+	fs := flag.NewFlagSet("gardener data", flag.ContinueOnError)
+	fs.SetOutput(stderr)
+	out := fs.String("out", "-", "output file, - for stdout")
+	if err := fs.Parse(args); err != nil {
+		if errors.Is(err, flag.ErrHelp) {
+			return 0
+		}
+		return 2
+	}
+	if fs.NArg() != 1 {
+		fmt.Fprintln(stderr, "usage: memoryd gardener data [--out PATH] <data-dir>")
+		return 2
+	}
+	res, report, err := gardener.Data(fs.Arg(0))
+	if err != nil {
+		fmt.Fprintf(stderr, "memoryd: gardener data failed: %v\n", err)
+		return 2
+	}
+	if report == nil {
+		for _, issue := range res.Issues {
+			fmt.Fprintf(stdout, "%-7s %-18s %s: %s\n", issue.Severity, issue.Code, issue.Path, issue.Message)
+		}
+		fmt.Fprintf(stderr, "memoryd: repository has %d validation errors\n", res.Errors())
+		return 1
+	}
+	var w io.Writer = stdout
+	if *out != "-" {
+		f, err := os.Create(*out)
+		if err != nil {
+			fmt.Fprintf(stderr, "memoryd: cannot create %s: %v\n", *out, err)
+			return 2
+		}
+		defer f.Close()
+		w = f
+	}
+	enc := json.NewEncoder(w)
+	enc.SetIndent("", "  ")
+	if err := enc.Encode(report); err != nil {
+		fmt.Fprintf(stderr, "memoryd: cannot write report: %v\n", err)
+		return 2
+	}
+	return 0
+}
+
+func runGardenerApply(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
+	fs := flag.NewFlagSet("gardener apply", flag.ContinueOnError)
+	fs.SetOutput(stderr)
+	apply := fs.Bool("apply", false, "execute the proposal (default is dry-run)")
+	asJSON := fs.Bool("json", false, "emit the full report as JSON")
+	if err := fs.Parse(args); err != nil {
+		if errors.Is(err, flag.ErrHelp) {
+			return 0
+		}
+		return 2
+	}
+	if fs.NArg() != 1 {
+		fmt.Fprintln(stderr, "usage: memoryd gardener apply [--apply] [--json] <data-dir> < proposal.json")
+		return 2
+	}
+	data, err := io.ReadAll(stdin)
+	if err != nil {
+		fmt.Fprintf(stderr, "memoryd: cannot read proposal: %v\n", err)
+		return 2
+	}
+	var proposal gardener.Proposal
+	if err := json.Unmarshal(data, &proposal); err != nil {
+		fmt.Fprintf(stderr, "memoryd: invalid proposal JSON: %v\n", err)
+		return 2
+	}
+
+	res, err := store.ApplyGardenerProposal(fs.Arg(0), &proposal, store.GardenerOptions{DryRun: !*apply})
+	if res != nil && res.Report != nil && *asJSON {
+		enc := json.NewEncoder(stdout)
+		enc.SetIndent("", "  ")
+		if err := enc.Encode(res); err != nil {
+			fmt.Fprintf(stderr, "memoryd: cannot write JSON: %v\n", err)
+			return 2
+		}
+	}
+	if err != nil {
+		if errors.Is(err, store.ErrProposalRejected) {
+			if res != nil && res.Report != nil && !*asJSON {
+				printGardenerReport(stdout, res.Report)
+			}
+			fmt.Fprintln(stderr, "memoryd: proposal rejected; nothing was written")
+			return 1
+		}
+		fmt.Fprintf(stderr, "memoryd: gardener apply failed: %v\n", err)
+		return 1
+	}
+	if !*asJSON {
+		printGardenerReport(stdout, res.Report)
+		mode := "dry-run"
+		if res.Committed {
+			mode = fmt.Sprintf("applied and committed (generation %d, %d paths)", res.Generation, len(res.Changed))
+		}
+		fmt.Fprintf(stdout, "\n%s\n", mode)
+	}
+	return 0
+}
+
+func printGardenerReport(w io.Writer, report *gardener.Report) {
+	for _, op := range report.Ops {
+		status := op.Status
+		if op.Code != "" {
+			status = fmt.Sprintf("%s %s", op.Status, op.Code)
+		}
+		fmt.Fprintf(w, "%3d %-14s %-10s %s\n", op.Index, op.Op, status, op.Detail)
+		if op.Message != "" {
+			fmt.Fprintf(w, "      %s\n", op.Message)
+		}
+		for _, warn := range op.Warnings {
+			fmt.Fprintf(w, "      warning: %s\n", warn)
+		}
+	}
+	for _, diff := range report.TagDiffs {
+		fmt.Fprintf(w, "tags %s: +%s -%s\n", diff.Path,
+			strings.Join(diff.Added, ","), strings.Join(diff.Removed, ","))
+	}
+	for _, warn := range report.Warnings {
+		fmt.Fprintf(w, "warning: %s\n", warn)
+	}
+}
+
 func runValidate(args []string, stdout, stderr io.Writer) int {
 	fs := flag.NewFlagSet("validate", flag.ContinueOnError)
 	fs.SetOutput(stderr)
@@ -565,6 +710,11 @@ Usage:
                                             link an existing supersede pair
   memoryd inbox [--file PATH] [--source NAME] [--list] <data-dir>
                                             append a raw capture to .inbox/
+  memoryd gardener data [--out PATH] <data-dir>
+                                            emit the tree analysis package
+  memoryd gardener apply [--apply] [--json] <data-dir> < proposal.json
+                                            validate (default) or apply a
+                                            tree-restructure proposal
   memoryd version                           print version information
   memoryd help                              show this help
 

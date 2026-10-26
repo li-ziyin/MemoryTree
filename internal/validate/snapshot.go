@@ -29,6 +29,7 @@ type NodeInfo struct {
 	Title       string
 	Summary     string
 	Tags        []string
+	TagsDelta   []string
 	Status      string
 	Sensitivity string
 	Depth       int
@@ -85,6 +86,7 @@ func (v *validator) snapshot() *Snapshot {
 			Title:       n.Title,
 			Summary:     n.Summary,
 			Tags:        sortedSet(rec.effective),
+			TagsDelta:   sortedSet(rec.tags),
 			Status:      n.Status,
 			Sensitivity: n.Sensitivity,
 			Depth:       depth,

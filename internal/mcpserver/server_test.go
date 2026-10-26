@@ -174,7 +174,7 @@ func TestInitializeAndToolsList(t *testing.T) {
 	readOnly := map[string]bool{
 		"memory_brief": true, "memory_search": true, "memory_get": true, "memory_tree": true,
 		"memory_suggest_mount": true,
-		"memory_add": false, "memory_supersede": false,
+		"memory_add":           false, "memory_supersede": false,
 	}
 	for _, raw := range tools {
 		tool := mustMap(t, raw, "tool")
