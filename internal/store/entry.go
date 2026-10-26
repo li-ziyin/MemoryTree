@@ -26,6 +26,14 @@ const (
 
 var tagPattern = regexp.MustCompile(`^[\p{L}\p{N}_-]{1,32}$`)
 
+// sourceKindValues is the closed enum of spec 8.2.
+var sourceKindValues = map[string]bool{
+	"conversation": true,
+	"document":     true,
+	"manual":       true,
+	"import":       true,
+}
+
 func validType(t string) bool {
 	switch t {
 	case model.TypeUser, model.TypeFeedback, model.TypeProject, model.TypeReference:
@@ -96,8 +104,8 @@ func buildEntry(node *validate.NodeInfo, in EntryInput, created string) (*model.
 		return nil, inputf("V-CONTENT-2", "source.agent is required")
 	}
 	kind := strings.TrimSpace(in.Source.Kind)
-	if kind == "" {
-		return nil, inputf("V-CONTENT-2", "source.kind is required")
+	if !sourceKindValues[kind] {
+		return nil, inputf("V-CONTENT-2", "source.kind must be conversation, document, manual, or import")
 	}
 	if ref := strings.TrimSpace(in.Source.Ref); ref != "" && isAbsoluteish(ref) {
 		return nil, inputf("V-CONTENT-2", "source.ref must not be an absolute path")

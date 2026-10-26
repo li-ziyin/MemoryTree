@@ -76,6 +76,64 @@ func TestAddEntrySupersedesRewritesOld(t *testing.T) {
 	}
 }
 
+// Format v1 keeps supersedes lists only on the active head (V-SUP-4), so a
+// third version takes over the WHOLE predecessor set: v3 supersedes
+// [v1, v2], v2's own list is cleared, and v1/v2 both point at v3.
+func TestSupersedeChainFlattens(t *testing.T) {
+	root := newRepo(t)
+	v1 := addOne(t, root, "压缩工具")
+	in := validInput()
+	in.Title = "压缩工具 v2"
+	in.Supersedes = []string{v1.ID}
+	v2, err := AddEntry(root, in)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Path A: memoryd-style add with supersedes.
+	in2 := validInput()
+	in2.Title = "压缩工具 v3"
+	in2.Supersedes = []string{v2.ID}
+	v3, err := AddEntry(root, in2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	e1, e2, e3 := readEntry(t, v1.Path), readEntry(t, v2.Path), readEntry(t, v3.Path)
+	if *e1.SupersededBy != v3.ID || *e2.SupersededBy != v3.ID {
+		t.Fatalf("predecessors not re-pointed: %s %s", *e1.SupersededBy, *e2.SupersededBy)
+	}
+	if len(e2.Supersedes) != 0 {
+		t.Fatalf("v2 supersedes = %v, want empty (V-SUP-4)", e2.Supersedes)
+	}
+	if len(e3.Supersedes) != 2 {
+		t.Fatalf("v3 supersedes = %v, want both predecessors", e3.Supersedes)
+	}
+	if _, err := index.Build(root, index.BuildOptions{}); err != nil {
+		t.Fatalf("repository invalid after chain flatten: %v", err)
+	}
+
+	// Path B: standalone SupersedeEntry on a fresh chain.
+	w1 := addOne(t, root, "网关配置")
+	w2 := addOne(t, root, "网关配置 v2")
+	if _, err := SupersedeEntry(root, w1.ID, w2.ID); err != nil {
+		t.Fatal(err)
+	}
+	w3 := addOne(t, root, "网关配置 v3")
+	if _, err := SupersedeEntry(root, w2.ID, w3.ID); err != nil {
+		t.Fatal(err)
+	}
+	g1, g3 := readEntry(t, w1.Path), readEntry(t, w3.Path)
+	if *g1.SupersededBy != w3.ID {
+		t.Fatalf("w1 superseded_by = %s, want %s", *g1.SupersededBy, w3.ID)
+	}
+	if len(g3.Supersedes) != 2 {
+		t.Fatalf("w3 supersedes = %v, want both", g3.Supersedes)
+	}
+	if _, err := index.Build(root, index.BuildOptions{}); err != nil {
+		t.Fatalf("repository invalid after standalone chain flatten: %v", err)
+	}
+}
+
 func TestSupersedeEntryLinksExisting(t *testing.T) {
 	root := newRepo(t)
 	first := addOne(t, root, "ReadBook 状态")

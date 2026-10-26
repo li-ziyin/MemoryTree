@@ -137,9 +137,10 @@ func AddEntry(dataDir string, in EntryInput) (*AddResult, error) {
 	if err != nil {
 		return nil, err
 	}
-	rels := []string{relFromRoot(root, path)}
+	relNew := relFromRoot(root, path)
+	rels := []string{relNew}
 	if len(entry.Supersedes) > 0 {
-		supRels, err := supersedeOldEntries(root, snap, entry.ID, entry.Supersedes)
+		supRels, err := supersedeOldEntries(root, snap, relNew, entry.ID, entry.Supersedes)
 		if err != nil {
 			return nil, err
 		}
@@ -157,22 +158,30 @@ func AddEntry(dataDir string, in EntryInput) (*AddResult, error) {
 	return &AddResult{ID: entry.ID, Path: path, Generation: gen, Committed: true}, nil
 }
 
-// finishWrite commits the written paths and refreshes the index, applying
-// the D10 failure contract: when the commit fails the files stay and the
-// index is still refreshed, but the caller gets an error naming the manual
-// recovery command.
+// finishWrite validates the freshly written tree, rebuilds the index, and
+// commits exactly the written paths. Validation runs before the commit so a
+// broken write never enters git; a failed commit keeps files and index and
+// returns an error naming the manual recovery command (D10).
 func finishWrite(root string, rels []string, message string) (int64, error) {
-	commitErr := gitio.Commit(root, rels, message)
-	var gen int64
-	if build, err := index.Build(root, index.BuildOptions{}); err == nil {
-		gen = build.Generation
+	build, buildErr := index.Build(root, index.BuildOptions{})
+	if buildErr != nil {
+		if errors.Is(buildErr, index.ErrInvalidRepository) {
+			return 0, fmt.Errorf(
+				"files written but the tree no longer validates: %w; inspect with memoryd validate %s and fix or revert",
+				buildErr, root)
+		}
+		// A stale or corrupt index does not invalidate the write itself.
+		build = nil
 	}
-	if commitErr != nil {
+	if err := gitio.Commit(root, rels, message); err != nil {
 		return 0, fmt.Errorf(
 			"files written but git commit failed: %v; recover with: git -C %s add %s && git -C %s commit -m %q",
-			commitErr, root, strings.Join(rels, " "), root, message)
+			err, root, strings.Join(rels, " "), root, message)
 	}
-	return gen, nil
+	if build != nil {
+		return build.Generation, nil
+	}
+	return 0, nil
 }
 
 // relFromRoot converts an absolute path inside root into a POSIX rel path

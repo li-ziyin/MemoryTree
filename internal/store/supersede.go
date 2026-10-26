@@ -3,6 +3,7 @@ package store
 import (
 	"fmt"
 	"path/filepath"
+	"sort"
 
 	"github.com/li-ziyin/memorytree/internal/docfile"
 	"github.com/li-ziyin/memorytree/internal/format"
@@ -44,27 +45,77 @@ func entryByID(snap *validate.Snapshot, id string) (validate.EntryInfo, bool) {
 	return validate.EntryInfo{}, false
 }
 
-// supersedeOldEntries flips every superseded target of a just-written entry
-// to status superseded and points superseded_by at it (V-SUP-2/3/5). It
-// returns the repository-relative paths it rewrote.
-func supersedeOldEntries(root string, snap *validate.Snapshot, newID string, supersedes []string) ([]string, error) {
-	var rewritten []string
-	for _, id := range supersedes {
+// takeOver moves the head role from target to newID. Format v1 keeps
+// supersedes lists only on the active head (V-SUP-4), so the target is
+// superseded with an EMPTY list, its predecessor set is inherited by the
+// new head, and every predecessor's superseded_by is re-pointed (V-SUP-2).
+// Version history chains through superseded_by and git instead. It returns
+// the repository-relative paths it rewrote.
+func takeOver(root string, snap *validate.Snapshot, newID string, target validate.EntryInfo) ([]string, error) {
+	inherit := append([]string(nil), target.Supersedes...)
+	rels := []string{target.Path}
+	if _, err := rewriteEntry(root, target.Path, func(e *model.Entry) {
+		e.Status = model.EntrySuperseded
+		idCopy := newID
+		e.SupersededBy = &idCopy
+		e.Supersedes = []string{}
+		e.UpdatedAt = now().Format(timeFormat)
+	}); err != nil {
+		return nil, fmt.Errorf("rewrite superseded entry %s: %w", target.ID, err)
+	}
+	for _, mid := range inherit {
+		m, ok := entryByID(snap, mid)
+		if !ok {
+			return nil, inputf("V-SUP-1", "superseded predecessor %s vanished during the write", mid)
+		}
+		if _, err := rewriteEntry(root, m.Path, func(e *model.Entry) {
+			idCopy := newID
+			e.SupersededBy = &idCopy
+			e.UpdatedAt = now().Format(timeFormat)
+		}); err != nil {
+			return nil, fmt.Errorf("re-point predecessor %s: %w", mid, err)
+		}
+		rels = append(rels, m.Path)
+	}
+	return rels, nil
+}
+
+// supersedeOldEntries applies takeOver for every target of a just-written
+// entry, then rewrites that entry's own supersedes list to the flattened
+// union of its requested targets and everything those targets superseded.
+// It returns the repository-relative paths it rewrote.
+func supersedeOldEntries(root string, snap *validate.Snapshot, newEntryRel, newID string, requested []string) ([]string, error) {
+	flat := make([]string, 0, len(requested)+1)
+	seen := make(map[string]bool, len(requested)+1)
+	add := func(id string) {
+		if !seen[id] {
+			seen[id] = true
+			flat = append(flat, id)
+		}
+	}
+	var rels []string
+	for _, id := range requested {
 		target, ok := entryByID(snap, id)
 		if !ok {
 			return nil, inputf("V-SUP-1", "supersedes target %s vanished during the write", id)
 		}
-		if _, err := rewriteEntry(root, target.Path, func(e *model.Entry) {
-			e.Status = model.EntrySuperseded
-			newIDCopy := newID
-			e.SupersededBy = &newIDCopy
-			e.UpdatedAt = now().Format(timeFormat)
-		}); err != nil {
-			return nil, fmt.Errorf("rewrite superseded entry %s: %w", id, err)
+		add(id)
+		for _, mid := range target.Supersedes {
+			add(mid)
 		}
-		rewritten = append(rewritten, target.Path)
+		takeRels, err := takeOver(root, snap, newID, target)
+		if err != nil {
+			return nil, err
+		}
+		rels = append(rels, takeRels...)
 	}
-	return rewritten, nil
+	sort.Strings(flat)
+	if _, err := rewriteEntry(root, newEntryRel, func(e *model.Entry) {
+		e.Supersedes = flat
+	}); err != nil {
+		return nil, fmt.Errorf("rewrite new entry supersedes list: %w", err)
+	}
+	return append(rels, newEntryRel), nil
 }
 
 // SupersedeResult describes one SupersedeEntry call.
@@ -76,8 +127,9 @@ type SupersedeResult struct {
 	Committed  bool   `json:"committed"`
 }
 
-// SupersedeEntry links two existing entries: old becomes superseded and
-// superseded_by points at by, whose supersedes list gains old (V-SUP-2).
+// SupersedeEntry links two existing entries: old becomes superseded, its
+// predecessor set is inherited by by, and every predecessor is re-pointed
+// (V-SUP-2/4/5).
 func SupersedeEntry(dataDir, oldID, byID string) (*SupersedeResult, error) {
 	root, err := filepath.Abs(dataDir)
 	if err != nil {
@@ -123,26 +175,38 @@ func SupersedeEntry(dataDir, oldID, byID string) (*SupersedeResult, error) {
 		}
 	}
 
-	oldPath, err := rewriteEntry(root, old.Path, func(e *model.Entry) {
-		e.Status = model.EntrySuperseded
-		idCopy := byID
-		e.SupersededBy = &idCopy
-		e.UpdatedAt = now().Format(timeFormat)
-	})
+	takeRels, err := takeOver(root, snap, byID, old)
 	if err != nil {
-		return nil, fmt.Errorf("rewrite superseded entry: %w", err)
+		return nil, err
 	}
+	flat := append(append([]string(nil), by.Supersedes...), old.Supersedes...)
+	flat = append(flat, oldID)
+	sort.Strings(unique(flat))
 	byPath, err := rewriteEntry(root, by.Path, func(e *model.Entry) {
-		e.Supersedes = append(e.Supersedes, oldID)
+		e.Supersedes = flat
 		e.UpdatedAt = now().Format(timeFormat)
 	})
 	if err != nil {
 		return nil, fmt.Errorf("rewrite superseding entry: %w", err)
 	}
-	gen, err := finishWrite(root, []string{old.Path, by.Path},
+	oldPath := filepath.Join(root, filepath.FromSlash(old.Path))
+	rels := append(takeRels, by.Path)
+	gen, err := finishWrite(root, rels,
 		fmt.Sprintf("memoryd: supersede %s by %s", oldID, byID))
 	if err != nil {
 		return nil, err
 	}
 	return &SupersedeResult{OldPath: oldPath, ByID: byID, ByPath: byPath, Generation: gen, Committed: true}, nil
+}
+
+func unique(ids []string) []string {
+	seen := make(map[string]bool, len(ids))
+	out := ids[:0]
+	for _, id := range ids {
+		if !seen[id] {
+			seen[id] = true
+			out = append(out, id)
+		}
+	}
+	return out
 }
