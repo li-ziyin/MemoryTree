@@ -211,7 +211,7 @@ func runMCP(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	}
 	defer ix.Close()
 
-	srv, err := mcpserver.New(ix, mcpserver.Options{Version: version, Warnings: warnings})
+	srv, err := mcpserver.New(ix, mcpserver.Options{Version: version, Warnings: warnings, Root: dir})
 	if err != nil {
 		fmt.Fprintf(stderr, "memoryd: cannot start MCP server: %v\n", err)
 		return 2

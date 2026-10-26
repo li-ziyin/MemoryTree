@@ -10,13 +10,17 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"time"
 
 	"github.com/li-ziyin/memorytree/internal/index"
+	"github.com/li-ziyin/memorytree/internal/validate"
 )
 
 const (
 	latestProtocolVersion = "2025-06-18"
 	maxMessageBytes       = 8 << 20
+	requestTimeout        = 60 * time.Second
+	staleCheckInterval    = 30 * time.Second
 )
 
 var supportedProtocolVersions = map[string]bool{
@@ -32,14 +36,22 @@ type Options struct {
 	// Warnings are repeated in every response envelope, for example
 	// validation warnings found when the index was refreshed at startup.
 	Warnings []string
+	// Root is the data directory of the index. When set, the server
+	// re-checks the source fingerprint at most once per staleCheckInterval
+	// and warns when it no longer matches the index it is serving.
+	Root string
 }
 
 // Server serves a read-only index over stdio.
 type Server struct {
-	index      *index.Index
-	version    string
-	generation int64
-	warnings   []string
+	index       *index.Index
+	version     string
+	generation  int64
+	warnings    []string
+	root        string
+	fingerprint string
+	lastCheck   time.Time
+	staleWarned bool
 }
 
 // New prepares a server for an opened index.
@@ -53,10 +65,13 @@ func New(ix *index.Index, opts Options) (*Server, error) {
 		version = "dev"
 	}
 	return &Server{
-		index:      ix,
-		version:    version,
-		generation: meta.Generation,
-		warnings:   append([]string(nil), opts.Warnings...),
+		index:       ix,
+		version:     version,
+		generation:  meta.Generation,
+		warnings:    append([]string(nil), opts.Warnings...),
+		root:        opts.Root,
+		fingerprint: meta.Fingerprint,
+		lastCheck:   time.Now(),
 	}, nil
 }
 
@@ -111,7 +126,12 @@ func (s *Server) Serve(in io.Reader, out io.Writer) error {
 			continue
 		}
 
-		result, rpcErr := s.dispatch(req)
+		if req.Method == "tools/call" {
+			s.refreshStaleness(time.Now())
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), requestTimeout)
+		result, rpcErr := s.dispatch(ctx, req)
+		cancel()
 		resp := response{JSONRPC: "2.0", ID: req.ID}
 		if rpcErr != nil {
 			resp.Error = rpcErr
@@ -158,7 +178,7 @@ func writeMessage(out io.Writer, v any) error {
 	return err
 }
 
-func (s *Server) dispatch(req request) (any, *rpcError) {
+func (s *Server) dispatch(ctx context.Context, req request) (any, *rpcError) {
 	switch req.Method {
 	case "initialize":
 		return s.initialize(req.Params)
@@ -167,10 +187,34 @@ func (s *Server) dispatch(req request) (any, *rpcError) {
 	case "tools/list":
 		return map[string]any{"tools": toolDefinitions()}, nil
 	case "tools/call":
-		return s.callTool(req.Params)
+		return s.callTool(ctx, req.Params)
 	default:
 		return nil, &rpcError{Code: -32601, Message: fmt.Sprintf("method %q not found", req.Method)}
 	}
+}
+
+// refreshStaleness re-reads the source repository at most once per
+// staleCheckInterval and records one warning when it no longer matches the
+// index the server started from. Serve is single-goroutine; no locking.
+func (s *Server) refreshStaleness(now time.Time) {
+	if s.root == "" || s.staleWarned || now.Sub(s.lastCheck) < staleCheckInterval {
+		return
+	}
+	s.lastCheck = now
+	res, snap, err := validate.ValidateWithSnapshot(s.root)
+	var warning string
+	switch {
+	case err != nil:
+		warning = fmt.Sprintf("repository cannot be re-read (%v); results are from the startup snapshot", err)
+	case snap == nil:
+		warning = fmt.Sprintf("repository has validation errors (%d); results are from the startup snapshot", res.Errors())
+	case snap.Fingerprint != s.fingerprint:
+		warning = "source files changed since the index was built; restart memoryd mcp to serve current data"
+	default:
+		return
+	}
+	s.warnings = append(s.warnings, warning)
+	s.staleWarned = true
 }
 
 type initializeParams struct {
@@ -217,7 +261,7 @@ type callToolParams struct {
 	Arguments json.RawMessage `json:"arguments"`
 }
 
-func (s *Server) callTool(raw json.RawMessage) (any, *rpcError) {
+func (s *Server) callTool(ctx context.Context, raw json.RawMessage) (any, *rpcError) {
 	var params callToolParams
 	if err := json.Unmarshal(raw, &params); err != nil {
 		return nil, &rpcError{Code: -32602, Message: "invalid tools/call params"}
@@ -232,13 +276,13 @@ func (s *Server) callTool(raw json.RawMessage) (any, *rpcError) {
 	)
 	switch params.Name {
 	case "memory_brief":
-		env, terr = s.memoryBrief(params.Arguments)
+		env, terr = s.memoryBrief(ctx, params.Arguments)
 	case "memory_search":
-		env, terr = s.memorySearch(params.Arguments)
+		env, terr = s.memorySearch(ctx, params.Arguments)
 	case "memory_get":
-		env, terr = s.memoryGet(params.Arguments)
+		env, terr = s.memoryGet(ctx, params.Arguments)
 	case "memory_tree":
-		env, terr = s.memoryTree(params.Arguments)
+		env, terr = s.memoryTree(ctx, params.Arguments)
 	default:
 		return nil, &rpcError{Code: -32602, Message: fmt.Sprintf("unknown tool %q", params.Name)}
 	}
@@ -248,18 +292,18 @@ func (s *Server) callTool(raw json.RawMessage) (any, *rpcError) {
 	return toolResultFromEnvelope(env, false), nil
 }
 
-func (s *Server) search(opts index.SearchOptions) ([]index.Hit, error) {
-	return s.index.Search(context.Background(), opts)
+func (s *Server) search(ctx context.Context, opts index.SearchOptions) ([]index.Hit, error) {
+	return s.index.Search(ctx, opts)
 }
 
-func (s *Server) nodes() ([]index.Node, error) {
-	return s.index.Nodes(context.Background())
+func (s *Server) nodes(ctx context.Context) ([]index.Node, error) {
+	return s.index.Nodes(ctx)
 }
 
-func (s *Server) entry(id string) (*index.Entry, error) {
-	return s.index.Entry(context.Background(), id)
+func (s *Server) entry(ctx context.Context, id string) (*index.Entry, error) {
+	return s.index.Entry(ctx, id)
 }
 
-func (s *Server) entryCounts() (map[string]index.EntryCount, error) {
-	return s.index.EntryCounts(context.Background())
+func (s *Server) entryCounts(ctx context.Context) (map[string]index.EntryCount, error) {
+	return s.index.EntryCounts(ctx)
 }

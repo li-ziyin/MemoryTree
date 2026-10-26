@@ -2,7 +2,8 @@ package mcpserver
 
 import (
 	"encoding/json"
-	"math"
+
+	"github.com/li-ziyin/memorytree/internal/tokens"
 )
 
 const trustUntrusted = "untrusted-history"
@@ -86,25 +87,8 @@ func toolResultFromEnvelope(env *Envelope, isError bool) toolResult {
 	}
 }
 
-// estimateTokens approximates tokens for mixed English/Chinese text. ASCII
-// bytes count as a quarter token and any non-ASCII rune as one token, which is
-// deliberately conservative for Chinese.
+// estimateTokens approximates tokens for the data payload using the shared
+// estimator in internal/tokens (ASCII 0.25, non-ASCII 1).
 func estimateTokens(v any) int {
-	data, err := json.Marshal(v)
-	if err != nil {
-		return 0
-	}
-	return estimateTextTokens(string(data))
-}
-
-func estimateTextTokens(text string) int {
-	var tokens float64
-	for _, r := range text {
-		if r < 0x80 {
-			tokens += 0.25
-		} else {
-			tokens++
-		}
-	}
-	return int(math.Ceil(tokens))
+	return tokens.Estimate(v)
 }

@@ -2,6 +2,7 @@ package mcpserver
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -218,7 +219,7 @@ type briefItem struct {
 	Trust       string   `json:"trust"`
 }
 
-func (s *Server) memoryBrief(raw json.RawMessage) (*Envelope, *ToolError) {
+func (s *Server) memoryBrief(ctx context.Context, raw json.RawMessage) (*Envelope, *ToolError) {
 	var args briefArgs
 	if terr := decodeArguments(raw, &args); terr != nil {
 		return nil, terr
@@ -238,11 +239,11 @@ func (s *Server) memoryBrief(raw json.RawMessage) (*Envelope, *ToolError) {
 		return nil, invalidArgs("budget_tokens must be between 100 and 8000", "Omit it to use the default of 1200.")
 	}
 
-	nodes, err := s.nodes()
+	nodes, err := s.nodes(ctx)
 	if err != nil {
 		return nil, indexFailure(err)
 	}
-	counts, err := s.entryCounts()
+	counts, err := s.entryCounts(ctx)
 	if err != nil {
 		return nil, indexFailure(err)
 	}
@@ -292,7 +293,7 @@ func (s *Server) memoryBrief(raw json.RawMessage) (*Envelope, *ToolError) {
 
 	var userHits, updateHits, relatedHits, pendingHits []index.Hit
 	if hasGlobal {
-		userHits, err = s.search(index.SearchOptions{
+		userHits, err = s.search(ctx, index.SearchOptions{
 			SubtreePath: global.Path,
 			Types:       []string{model.TypeUser},
 			Limit:       10,
@@ -302,14 +303,14 @@ func (s *Server) memoryBrief(raw json.RawMessage) (*Envelope, *ToolError) {
 		}
 	}
 	if project != nil {
-		updateHits, err = s.search(index.SearchOptions{
+		updateHits, err = s.search(ctx, index.SearchOptions{
 			SubtreePath: project.Path,
 			Limit:       8,
 		})
 		if err != nil {
 			return nil, indexFailure(err)
 		}
-		pendingHits, err = s.search(index.SearchOptions{
+		pendingHits, err = s.search(ctx, index.SearchOptions{
 			SubtreePath: project.Path,
 			Types:       []string{model.TypeProject},
 			Limit:       5,
@@ -318,11 +319,11 @@ func (s *Server) memoryBrief(raw json.RawMessage) (*Envelope, *ToolError) {
 			return nil, indexFailure(err)
 		}
 	}
-	relatedHits, err = s.search(index.SearchOptions{Query: task, Limit: 12})
+	relatedHits, err = s.search(ctx, index.SearchOptions{Query: task, Limit: 12})
 	if err != nil {
 		return nil, indexFailure(err)
 	}
-	superseded, err := s.search(index.SearchOptions{
+	superseded, err := s.search(ctx, index.SearchOptions{
 		Query:    task,
 		Statuses: []string{model.EntrySuperseded},
 		Limit:    5,
@@ -450,7 +451,7 @@ type searchItem struct {
 	Trust string `json:"trust"`
 }
 
-func (s *Server) memorySearch(raw json.RawMessage) (*Envelope, *ToolError) {
+func (s *Server) memorySearch(ctx context.Context, raw json.RawMessage) (*Envelope, *ToolError) {
 	var args searchArgs
 	if terr := decodeArguments(raw, &args); terr != nil {
 		return nil, terr
@@ -484,7 +485,7 @@ func (s *Server) memorySearch(raw json.RawMessage) (*Envelope, *ToolError) {
 		return nil, invalidArgs(fmt.Sprintf("limit must be between 0 and %d", index.MaxLimit), "Omit it to use the default of 20.")
 	}
 
-	hits, err := s.search(index.SearchOptions{
+	hits, err := s.search(ctx, index.SearchOptions{
 		Query:    query,
 		NodeID:   nodeID,
 		Types:    types,
@@ -519,7 +520,7 @@ type getData struct {
 	FullChars int    `json:"full_chars,omitempty"`
 }
 
-func (s *Server) memoryGet(raw json.RawMessage) (*Envelope, *ToolError) {
+func (s *Server) memoryGet(ctx context.Context, raw json.RawMessage) (*Envelope, *ToolError) {
 	var args getArgs
 	if terr := decodeArguments(raw, &args); terr != nil {
 		return nil, terr
@@ -541,7 +542,7 @@ func (s *Server) memoryGet(raw json.RawMessage) (*Envelope, *ToolError) {
 			fmt.Sprintf("max_chars must be between %d and %d", minExcerptChars, maxExcerptChars),
 			"Use the default 1200 or a value in range.")
 	}
-	entry, err := s.entry(id)
+	entry, err := s.entry(ctx, id)
 	if errors.Is(err, index.ErrEntryNotFound) {
 		return nil, &ToolError{
 			Code:       "MEMORY_NOT_FOUND",
@@ -606,7 +607,7 @@ type treeNode struct {
 	Trust            string      `json:"trust"`
 }
 
-func (s *Server) memoryTree(raw json.RawMessage) (*Envelope, *ToolError) {
+func (s *Server) memoryTree(ctx context.Context, raw json.RawMessage) (*Envelope, *ToolError) {
 	var args treeArgs
 	if terr := decodeArguments(raw, &args); terr != nil {
 		return nil, terr
@@ -614,11 +615,11 @@ func (s *Server) memoryTree(raw json.RawMessage) (*Envelope, *ToolError) {
 	if args.Depth < 0 || args.Depth > 20 {
 		return nil, invalidArgs("depth must be between 0 and 20", "Omit it or use 0 for the whole subtree.")
 	}
-	nodes, err := s.nodes()
+	nodes, err := s.nodes(ctx)
 	if err != nil {
 		return nil, indexFailure(err)
 	}
-	counts, err := s.entryCounts()
+	counts, err := s.entryCounts(ctx)
 	if err != nil {
 		return nil, indexFailure(err)
 	}
