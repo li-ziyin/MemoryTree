@@ -1,6 +1,6 @@
 # MemoryTree 设计文档
 
-- 状态：M1 实现完成，检索验收复测通过（2026-10-25：20/20 完整与首条命中；每题独立会话 14,723 vs 基线 67,796 token，见 [docs/m1-acceptance.md](docs/m1-acceptance.md)）；人工评分 4.95 已确认（2026-10-26）。工程加固完成（2026-10-26）：CI 三平台矩阵与 schema 一致性检查、解析层直接测试与 fuzz、规模基线（[docs/perf-baseline.md](docs/perf-baseline.md)）、`memoryd bench` 检索回归门、短词 rune 拆分 FTS（索引 schema v2）、MCP 过期警告与请求超时。M2 写路径待开始
+- 状态：M1 实现完成，检索验收复测通过（2026-10-25：20/20 完整与首条命中；每题独立会话 14,723 vs 基线 67,796 token，见 [docs/m1-acceptance.md](docs/m1-acceptance.md)）；人工评分 4.95 已确认（2026-10-26）。工程加固完成（2026-10-26）：CI 三平台矩阵与 schema 一致性检查、解析层直接测试与 fuzz、规模基线（[docs/perf-baseline.md](docs/perf-baseline.md)）、`memoryd bench` 检索回归门、短词 rune 拆分 FTS（索引 schema v2）、MCP 过期警告与请求超时。M2 写路径完成（2026-10-27）：`memory_add`/`memory_supersede`（MCP + CLI）、单写者锁与崩溃回收、git 提交、inbox 采集与蒸馏提示词、真实仓 40 条（[docs/m2-acceptance.md](docs/m2-acceptance.md)）。M2 写路径完成（2026-10-27）
 - 工作名：MemoryTree；二进制名：`memoryd`
 - 语言与形态：Go，单二进制、默认 stdio、无后台常驻服务
 - 数据目录：独立 git 仓库；本机开发数据先定 `E:\MemoryTreeData`，其他用户默认 `~/.memorytree`
@@ -170,8 +170,8 @@ E:\MemoryTreeData\
 | `memory_search` | 混合搜索，返回摘要、ID、节点路径、状态 | 否 |
 | `memory_get` | 按 ID 取条目；默认全文，可给 query 取片段 | 否 |
 | `memory_tree` | 返回压缩树、节点摘要、计数 | 否 |
-| `memory_add` | 新增条目；可同时声明 `supersedes` | 是 |
-| `memory_supersede` | 显式取代旧条目 | 是 |
+| `memory_add` | 新增条目；可同时声明 `supersedes`（继承前身并扁平化，V-SUP-4） | 是 |
+| `memory_supersede` | 把两条已有条目连成取代对 | 是 |
 
 `memory_propose_move` 等 gardener 工具放到 V1.5，避免第一版出现自动改树能力。
 

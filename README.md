@@ -2,7 +2,7 @@
 
 Local-first, file-based memory for AI agents: a self-organizing tree of Markdown memories shared across ZCode, OpenCode, Qoder, and any MCP-capable client.
 
-> **Status: M1 feature-complete and benchmarked.** The v1 format, a Go validator with stable error codes, repository initialization, legacy import, the disposable SQLite FTS5 search index, and the read-only MCP server are working. The 20-question retrieval benchmark was rerun after short-query ranking and excerpt retrieval improvements: 20/20 complete and first-hit answers, 14,723 vs 67,796 tokens per task ([results](docs/m1-acceptance.md)). The write path is next; the data repository still needs three newer memories imported.
+> **Status: M2 write path complete.** Everything from M1 (v1 format, validator, init, legacy import, disposable SQLite FTS5 index, read-only MCP server, 20-question benchmark at 20/20) plus the write gateway: `memory_add` / `memory_supersede` over MCP and CLI with input validation by rule code, atomic writes, a single-writer lock with crash recovery, git commits, index refresh, and the `memoryd inbox` capture flow. Concurrency, crash, and supersede acceptance pass; the three newer memories are imported (40 entries, bench 21/21, [results](docs/m2-acceptance.md)). Next: M3 insertion placement and gardener proposals.
 
 ## Why
 
@@ -65,8 +65,16 @@ bash scripts/check.sh
 # Force a full rebuild, for example after an index schema change or corruption
 ./bin/memoryd index --rebuild ~/.memorytree
 
-# Serve the read-only MCP server over stdio
+# Serve the MCP server over stdio (read tools plus memory_add / memory_supersede)
 ./bin/memoryd mcp ~/.memorytree
+
+# Write one entry from stdin JSON (validates, writes atomically, commits, refreshes the index)
+echo '{"type":"project","title":"...","summary":"...","body":"...",
+       "source":{"agent":"zcode","kind":"conversation"}}' \
+  | ./bin/memoryd add ~/.memorytree
+
+# Capture raw text now, distill later (see docs/distillation-prompt.md)
+echo "raw notes..." | ./bin/memoryd inbox ~/.memorytree --source zcode
 
 # Rerun retrieval questions and fail when a gold entry is not the first hit
 ./bin/memoryd bench ~/.memorytree bench-questions.jsonl
@@ -89,7 +97,7 @@ On Windows, use paths such as `E:\MemoryTreeData`. `memoryd validate --json` and
 
 The index lives at `<data-dir>/.index/index.sqlite`. It is derived data: deleting it loses nothing. A normal `memoryd index` is a no-op when the managed files have not changed; any source change triggers a full rebuild in one SQLite transaction and increments the stored `generation`. An unreadable, corrupt, or schema-incompatible index is left in place and reported; rerun with `--rebuild` to replace it. The index contains full entry text, so `memoryd init` gitignores `.index/`; treat it as a local cache.
 
-`memoryd mcp` validates the repository and refreshes the index at startup, then serves `memory_brief`, `memory_search`, `memory_get`, and `memory_tree` as read-only tools. `memory_get` returns the full body by default, or a bounded excerpt when a `query` is supplied; excerpt responses set `excerpted` and `full_chars`. The server writes only inside `.index/`; memory files are never changed. It works from its startup snapshot, so restart it after editing memory files by hand. A corrupt or schema-incompatible index is not rebuilt automatically: the server refuses to start and reports that `memoryd index --rebuild` is required. Every response carries `index_generation` and warnings, and memory text is labelled `trust: untrusted-history`.
+`memoryd mcp` validates the repository and refreshes the index at startup, then serves the read tools `memory_brief`, `memory_search`, `memory_get`, and `memory_tree`, plus the write tools `memory_add` and `memory_supersede` (rule-code validation, atomic write, git commit, index refresh; results are searchable in the same session). `memory_get` returns the full body by default, or a bounded excerpt when a `query` is supplied; excerpt responses set `excerpted` and `full_chars`. The server writes only inside `.index/`; memory files are never changed. It works from its startup snapshot, so restart it after editing memory files by hand. A corrupt or schema-incompatible index is not rebuilt automatically: the server refuses to start and reports that `memoryd index --rebuild` is required. Every response carries `index_generation` and warnings, and memory text is labelled `trust: untrusted-history`.
 
 ## Repository layout
 
@@ -102,7 +110,7 @@ internal/
   index/                SQLite FTS5 build, rebuild, and search
   initrepo/             data repository initialization
   legacy/               flat legacy memory import
-  mcpserver/            read-only MCP over JSON-RPC 2.0 stdio
+  mcpserver/            MCP over JSON-RPC 2.0 stdio (read tools + write gateway)
   model/                v1 metadata objects
   validate/             repository-wide invariant checks
 spec/                   memory format v1 + JSON Schemas
@@ -122,8 +130,8 @@ The user data repository is separate. The default is `~/.memorytree`; it can be 
 
 - **M0** — complete: format spec, JSON Schemas, Go skeleton, validator, legacy import
 - **M1** — feature-complete and benchmarked: FTS5 trigram index (fingerprint, generation, `--rebuild`), the read-only MCP server (`brief/search/get/tree`), and the 20-question benchmark against `MEMORY.md` + grep. Rerun on 2026-10-25 after short-query ranking and excerpt retrieval: 20/20 complete and first-hit answers, 14,723 vs 67,796 tokens per task, near parity when `MEMORY.md` is amortized. Engineering hardening landed on 2026-10-26: cross-platform CI with a schema consistency job, direct parser tests and fuzz seeds, a scale baseline ([docs/perf-baseline.md](docs/perf-baseline.md)), the `memoryd bench` retrieval regression gate, a rune-split FTS index for short CJK queries (schema v2), and stale-index warnings with request deadlines in the MCP server
-- **M2** — next: write path (`add/supersede`), capture inbox, import the three newer memories, concurrency and crash tests; ranking and index changes are gated by `memoryd bench` and [docs/perf-baseline.md](docs/perf-baseline.md)
-- **M3** — insertion placement, gardener proposals, release hardening
+- **M2** — complete (2026-10-27): write gateway `memory_add`/`memory_supersede` over MCP and CLI (rule-code validation, atomic writes, single-writer lock with crash recovery, git commits, index refresh), `memoryd inbox` capture with the distillation prompt, the three newer memories imported, concurrency and crash tests — acceptance in [docs/m2-acceptance.md](docs/m2-acceptance.md)
+- **M3** — next: insertion placement, gardener proposals, release hardening
 
 ## Deliberately deferred
 
