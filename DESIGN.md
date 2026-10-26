@@ -1,6 +1,6 @@
 # MemoryTree 设计文档
 
-- 状态：M1 实现完成，检索验收复测通过（2026-10-25：20/20 完整与首条命中；每题独立会话 14,723 vs 基线 67,796 token，见 [docs/m1-acceptance.md](docs/m1-acceptance.md)）；人工评分 4.95 已确认（2026-10-26）。工程加固完成（2026-10-26）：CI 三平台矩阵与 schema 一致性检查、解析层直接测试与 fuzz、规模基线（[docs/perf-baseline.md](docs/perf-baseline.md)）、`memoryd bench` 检索回归门、短词 rune 拆分 FTS（索引 schema v2）、MCP 过期警告与请求超时。M2 写路径完成（2026-10-27）：`memory_add`/`memory_supersede`（MCP + CLI）、单写者锁与崩溃回收、git 提交、inbox 采集与蒸馏提示词、真实仓 40 条（[docs/m2-acceptance.md](docs/m2-acceptance.md)）。M2 写路径完成（2026-10-27）
+- 状态：M1 实现完成，检索验收复测通过（2026-10-25：20/20 完整与首条命中；每题独立会话 14,723 vs 基线 67,796 token，见 [docs/m1-acceptance.md](docs/m1-acceptance.md)）；人工评分 4.95 已确认（2026-10-26）。工程加固完成（2026-10-26）：CI 三平台矩阵与 schema 一致性检查、解析层直接测试与 fuzz、规模基线（[docs/perf-baseline.md](docs/perf-baseline.md)）、`memoryd bench` 检索回归门、短词 rune 拆分 FTS（索引 schema v2）、MCP 过期警告与请求超时。M2 写路径完成（2026-10-27）：`memory_add`/`memory_supersede`（MCP + CLI）、单写者锁与崩溃回收、git 提交、inbox 采集与蒸馏提示词、真实仓 40 条（[docs/m2-acceptance.md](docs/m2-acceptance.md)）。M3 挂载与 gardener 完成（2026-10-27）：`memory_suggest_mount`（MCP+CLI）与留一法验收、`memoryd gardener data/apply`（6 原语、G- 规则码、dry-run 默认、回滚、单提交；详见 [docs/gardener.md](docs/gardener.md) 与 [docs/m3-acceptance.md](docs/m3-acceptance.md)）。
 - 工作名：MemoryTree；二进制名：`memoryd`
 - 语言与形态：Go，单二进制、默认 stdio、无后台常驻服务
 - 数据目录：独立 git 仓库；本机开发数据先定 `E:\MemoryTreeData`，其他用户默认 `~/.memorytree`
@@ -170,10 +170,11 @@ E:\MemoryTreeData\
 | `memory_search` | 混合搜索，返回摘要、ID、节点路径、状态 | 否 |
 | `memory_get` | 按 ID 取条目；默认全文，可给 query 取片段 | 否 |
 | `memory_tree` | 返回压缩树、节点摘要、计数 | 否 |
+| `memory_suggest_mount` | 为新条目排序候选挂载节点（标签 + 文本相似度 + user 先验），Agent 判定后传给 `memory_add` | 否 |
 | `memory_add` | 新增条目；可同时声明 `supersedes`（继承前身并扁平化，V-SUP-4） | 是 |
 | `memory_supersede` | 把两条已有条目连成取代对 | 是 |
 
-`memory_propose_move` 等 gardener 工具放到 V1.5，避免第一版出现自动改树能力。
+树的重排不通过 MCP 工具暴露（V1）：gardener 走 CLI 离线流程（见第 7 节），`memory_propose_move` 类工具留到 V1.5 评估。
 
 实现方式：手写 JSON-RPC 2.0 over stdio（一行一条 JSON），不引入 MCP SDK；支持 `initialize`、`ping`、`tools/list`、`tools/call`，通知不返回响应，不支持批量请求。协议版本接受 2024-11-05、2025-03-26、2025-06-18，未知版本回落到 2025-06-18。所有工具标注 `readOnlyHint`。
 
@@ -233,13 +234,12 @@ V1 用"会话结束提示 + 手动触发"即可，不做后台常驻监听。适
 
 ## 7. gardener 流程
 
-1. 生成数据包：节点摘要、有效标签、子节点数、最近变更、检索失败日志。
-2. Agent 产出提案 JSON：操作列表（`move / split / merge / retag`）、理由、受影响 ID、预期 effective-tag diff。
-3. `memoryd` 校验：根唯一、无环、slug 冲突、条目不越级、敏感级别不降级。
-4. 在独立分支/补丁中应用，附审计报告；人批准后合并到主分支。
-5. 不通过则丢弃提案，原始树不变。
+1. `memoryd gardener data <data-dir>` 生成数据包：节点画像（摘要、有效标签与 delta、子节点数、条目数、深度、时间）、结构信号（children>8、depth>4、空项目、同父标签重叠 Jaccard≥0.5）、提案格式指南。检索失败日志 V1 暂未落盘。
+2. Agent 产出提案 JSON：操作列表（原语 `move_node / move_entry / retag_node / revise_node / create_node / archive_node`；split/merge 由组合表达）、理由、受影响 ID。节点引用支持 UUIDv7 或 slug 路径，路径按先前操作后的模拟态解析。
+3. `memoryd gardener apply`（默认 dry-run）校验：根唯一、无环、kind/slug 规则、V-TAG-2（move_entry 自动剔除被目标吸收的 delta 标签）、敏感级别不弱化，违规按 G- 规则码整案拒绝、零写入；深度>4 与同父>8 为警告。
+4. 人批准后 `--apply`：写锁 → 执行（带回滚日志）→ 全仓校验（失败自动回滚）→ 索引重建 → 恰好一个 `gardener:` git 提交。详见 [docs/gardener.md](docs/gardener.md)。
 
-V1 只生成提案，不自动应用。等真实语料证明树需要频繁调整后，再讨论自动合并低风险操作。
+V1 只生成提案与 dry-run，真实应用由人显式触发；不自动合并低风险操作。
 
 ## 8. 安全与隐私
 
@@ -308,15 +308,17 @@ V1 只生成提案，不自动应用。等真实语料证明树需要频繁调�
 - gardener 提案流程与 dry-run 应用。
 - 验收：插入 100 条真实记忆，挂载准确率可接受；提案不破坏不变量；与扁平基线对比有明确结论。
 
+完成（2026-10-27，见 [docs/m3-acceptance.md](docs/m3-acceptance.md)）：`memory_suggest_mount`（MCP + `memoryd suggest-mount`）与 `memoryd gardener data/apply`（6 原语、17 条 G- 规则码、dry-run 默认、回滚、单提交）。40 条真实记忆留一法 top-1 97.5% / top-3 100%；17 步真实提案 dry-run 零写入、副本应用全绿、重构后 bench 21/21。规范要求的 100 条复测在记忆量到位后重跑（`go run ./scripts/loo <data-dir>`）。
+
 ## 11. 待定问题
 
-1. 当前项目如何从 cwd 自动映射到节点：V1 由调用方显式传 `project`，还是加本地 `projects.yaml` 映射？
-2. 节点 `summary` 由谁维护、何时失效：Agent 写入时更新，还是 gardener 定期重生成？
-3. 默认最大深度/分支因子（建议 4/8）是否写进规范，还是只作为工具策略？
-4. `memory_add` 是否允许不传 `summary` 时机械截断正文生成，还是强制要求语义摘要？
-5. Git 是否作为硬依赖：V1 要求系统 git，缺失时只读可用；还是内置 go-git？
-6. 原始 `.archive/` 是否需要可选的静态加密，还是先依赖 OS 权限？
-7. 多设备同步是否只依赖用户自己的 git remote/云盘，不提供内置同步？
+1. 当前项目如何从 cwd 自动映射到节点：V1 由调用方显式传 `project`，还是加本地 `projects.yaml` 映射？（仍待定；V1 显式传参）
+2. ~~节点 `summary` 由谁维护、何时失效~~ 已决（2026-10-27）：`memory_add` 不动节点摘要；由 gardener 提案的 `revise_node` 维护，人批准后生效。
+3. ~~默认最大深度/分支因子（建议 4/8）是否写进规范，还是只作为工具策略~~ 已决（2026-10-27）：保持规范警告（12.6）、工具策略——mount 不限制、gardener 以 G-DEPTH-1/G-BRANCH-1 警告不阻断。
+4. ~~`memory_add` 是否允许不传 `summary` 时机械截断正文生成，还是强制要求语义摘要~~ 已决（随 M2）：强制非空语义摘要（V-CONTENT-1），不机械截断；语义性由蒸馏提示词约束。
+5. Git 是否作为硬依赖：V1 要求系统 git，缺失时只读可用；还是内置 go-git？（现状：系统 git 硬依赖，缺失拒写）
+6. 原始 `.archive/` 是否需要可选的静态加密，还是先依赖 OS 权限？（现状：OS 权限，0600，不进 git）
+7. 多设备同步是否只依赖用户自己的 git remote/云盘，不提供内置同步？（现状：无内置同步）
 
 ## 12. 相关文档
 
