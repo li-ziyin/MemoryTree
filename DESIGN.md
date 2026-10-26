@@ -1,6 +1,6 @@
 # MemoryTree 设计文档
 
-- 状态：M1 实现完成（2026-10-21）：`memoryd index` 与只读 MCP（`brief/search/get/tree`）；检索验收（20 问对比基线）与 M2 写路径待开始
+- 状态：M1 实现完成，检索验收复测通过（2026-10-25：20/20 完整与首条命中；每题独立会话 14,723 vs 基线 67,796 token，见 [docs/m1-acceptance.md](docs/m1-acceptance.md)）；人工评分 4.95 已确认（2026-10-26），M2 写路径待开始
 - 工作名：MemoryTree；二进制名：`memoryd`
 - 语言与形态：Go，单二进制、默认 stdio、无后台常驻服务
 - 数据目录：独立 git 仓库；本机开发数据先定 `E:\MemoryTreeData`，其他用户默认 `~/.memorytree`
@@ -158,7 +158,7 @@ E:\MemoryTreeData\
 - 元数据：`meta` 表记录 `schema_version / repo_id / generation / fingerprint / built_at / nodes / entries`。fingerprint 为所有受管文件（`memory.yaml`、`node.md`、`memories/*.md`）内容的 SHA-256。
 - 幂等：fingerprint 未变且未指定 `--rebuild` 时不写入，generation 不变；每次实际重建 generation 加 1。
 - 表：`nodes`、`entries`、`entry_tags`，以及 external-content FTS5 表 `entries_fts(title, summary, tags, body, tokenize='trigram')`。正文只在 `entries` 存一份，`node.md` 正文不进入索引。
-- 查询：每个词至少 3 个字符时走 FTS5 trigram（中文可用）；任一词不足 3 个字符时整体回退为对 title/summary/body 的转义 LIKE。默认只返回 `active`，可按节点、类型、有效标签（AND）、状态过滤，结果上限 100 条。
+- 查询：每个词至少 3 个字符时走 FTS5 trigram（中文可用）；任一词不足 3 个字符时整体回退为对 title/summary/body 的转义 LIKE。LIKE 回退按命中位置计分（标题权重 2、摘要权重 1、正文权重 0），再按更新时间排序，避免更新更近但仅正文偶然命中的条目压过标题/摘要命中。默认只返回 `active`，可按节点、类型、有效标签（AND）、状态过滤，结果上限 100 条。
 
 ## 5. MCP 接口
 
@@ -168,7 +168,7 @@ E:\MemoryTreeData\
 |---|---|---|
 | `memory_brief` | 按任务和项目返回固定 token 预算的上下文简报 | 否 |
 | `memory_search` | 混合搜索，返回摘要、ID、节点路径、状态 | 否 |
-| `memory_get` | 按 ID 取完整条目 | 否 |
+| `memory_get` | 按 ID 取条目；默认全文，可给 query 取片段 | 否 |
 | `memory_tree` | 返回压缩树、节点摘要、计数 | 否 |
 | `memory_add` | 新增条目；可同时声明 `supersedes` | 是 |
 | `memory_supersede` | 显式取代旧条目 | 是 |
@@ -192,6 +192,8 @@ E:\MemoryTreeData\
 只返回摘要和 ID，不返回全文；Agent 需要时再 `memory_get`。服务端只做确定性拼装，不做生成。
 
 预算按分区轮转取用：每轮每个分区最多加入一条，避免靠前的分区吃光预算。`tokens_estimated` 是近似值（ASCII 计 0.25 token，非 ASCII 计 1 token），只统计 `data`，不计 envelope 元数据；预算不足时返回 `truncated` 警告。
+
+**memory_get 片段模式**：默认返回完整正文。传 `query` 时按词在正文中的命中位置截取片段，最多 `max_chars` 个字符（默认 1200，范围 200–8000）；响应中 `body` 为片段，并带 `excerpted=true`、`full_chars` 和 warning。`query` 未命中正文时返回开头片段并警告；正文本身不超过 `max_chars` 时仍返回全文。全文模式保持原行为。
 
 ### 5.3 响应与错误
 
@@ -287,10 +289,10 @@ V1 只生成提案，不自动应用。等真实语料证明树需要频繁调�
 前置（已于 2026-10-20 完成）：源码仓与数据仓各完成一次 `git init` 和初始提交。数据仓的初始提交必须在 `memoryd validate` 全绿之后，用来冻结 M0 基线；M1 及之后的索引、写入才有可审计的起点。
 
 1. `memoryd index`（已完成 2026-10-21）：FTS5 trigram 构建与 `--rebuild`，源文件 fingerprint 不变时跳过，重建时 generation 递增；已独立验收，不依赖 MCP。
-2. 只读 MCP（已完成 2026-10-21）：`memory_brief / search / get / tree`，手写 JSON-RPC 2.0 stdio；启动时校验并刷新索引，坏索引要求显式 `--rebuild`。所有读工具依赖第 1 步的索引。真实数据仓冒烟通过；接入 Qoder 客户端与 20 问验收待做。
+2. 只读 MCP（已完成 2026-10-21）：`memory_brief / search / get / tree`，手写 JSON-RPC 2.0 stdio；启动时校验并刷新索引，坏索引要求显式 `--rebuild`。所有读工具依赖第 1 步的索引。真实数据仓冒烟通过；接入 Qoder 客户端待做。
 
 - FTS5 trigram 中文检索可用；索引可重建。
-- 验收：20 个真实问题，对比 `MEMORY.md + grep` 基线，记录命中率、token 消耗和人工评分。
+- 验收（2026-10-25 复测）：20 个真实问题，对比 `MEMORY.md + grep` 基线。20/20 完整命中、20/20 首条命中；每题独立会话 14,723 vs 67,796 token（约省 78%），同会话摊薄基线 13,095 token（基本持平）。首轮发现的 LIKE 排序与 `memory_get` 全文成本已修复：LIKE 按标题/摘要/正文分层排序，`memory_get` 支持 `query` 片段模式。数据仓仍缺 3 条新增记忆，留待 M2 补齐后复测。详见 [docs/m1-acceptance.md](docs/m1-acceptance.md)。
 
 ### M2：写入与采集
 

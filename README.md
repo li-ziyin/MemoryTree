@@ -2,7 +2,7 @@
 
 Local-first, file-based memory for AI agents: a self-organizing tree of Markdown memories shared across ZCode, OpenCode, Qoder, and any MCP-capable client.
 
-> **Status: M1 feature-complete.** The v1 format, a Go validator with stable error codes, repository initialization, legacy import, the disposable SQLite FTS5 search index, and the read-only MCP server are working. The 20-question retrieval benchmark against the flat-memory baseline and the write path are next.
+> **Status: M1 feature-complete and benchmarked.** The v1 format, a Go validator with stable error codes, repository initialization, legacy import, the disposable SQLite FTS5 search index, and the read-only MCP server are working. The 20-question retrieval benchmark was rerun after short-query ranking and excerpt retrieval improvements: 20/20 complete and first-hit answers, 14,723 vs 67,796 tokens per task ([results](docs/m1-acceptance.md)). The write path is next; the data repository still needs three newer memories imported.
 
 ## Why
 
@@ -83,7 +83,7 @@ On Windows, use paths such as `E:\MemoryTreeData`. `memoryd validate --json` and
 
 The index lives at `<data-dir>/.index/index.sqlite`. It is derived data: deleting it loses nothing. A normal `memoryd index` is a no-op when the managed files have not changed; any source change triggers a full rebuild in one SQLite transaction and increments the stored `generation`. An unreadable, corrupt, or schema-incompatible index is left in place and reported; rerun with `--rebuild` to replace it. The index contains full entry text, so `memoryd init` gitignores `.index/`; treat it as a local cache.
 
-`memoryd mcp` validates the repository and refreshes the index at startup, then serves `memory_brief`, `memory_search`, `memory_get`, and `memory_tree` as read-only tools. It writes only inside `.index/`; memory files are never changed. The server works from its startup snapshot, so restart it after editing memory files by hand. A corrupt or schema-incompatible index is not rebuilt automatically: the server refuses to start and reports that `memoryd index --rebuild` is required. Every response carries `index_generation` and warnings, and memory text is labelled `trust: untrusted-history`.
+`memoryd mcp` validates the repository and refreshes the index at startup, then serves `memory_brief`, `memory_search`, `memory_get`, and `memory_tree` as read-only tools. `memory_get` returns the full body by default, or a bounded excerpt when a `query` is supplied; excerpt responses set `excerpted` and `full_chars`. The server writes only inside `.index/`; memory files are never changed. It works from its startup snapshot, so restart it after editing memory files by hand. A corrupt or schema-incompatible index is not rebuilt automatically: the server refuses to start and reports that `memoryd index --rebuild` is required. Every response carries `index_generation` and warnings, and memory text is labelled `trust: untrusted-history`.
 
 ## Repository layout
 
@@ -115,8 +115,8 @@ The user data repository is separate. The default is `~/.memorytree`; it can be 
 ## Roadmap
 
 - **M0** — complete: format spec, JSON Schemas, Go skeleton, validator, legacy import
-- **M1** — feature-complete: FTS5 trigram index (fingerprint, generation, `--rebuild`) and the read-only MCP server (`brief/search/get/tree`); the 20-question retrieval benchmark against `MEMORY.md` + grep is pending
-- **M2** — next: write path (`add/supersede`), capture inbox, concurrency and crash tests
+- **M1** — feature-complete and benchmarked: FTS5 trigram index (fingerprint, generation, `--rebuild`), the read-only MCP server (`brief/search/get/tree`), and the 20-question benchmark against `MEMORY.md` + grep. Rerun on 2026-10-25 after short-query ranking and excerpt retrieval: 20/20 complete and first-hit answers, 14,723 vs 67,796 tokens per task, near parity when `MEMORY.md` is amortized
+- **M2** — next: write path (`add/supersede`), capture inbox, import the three newer memories, concurrency and crash tests
 - **M3** — insertion placement, gardener proposals, release hardening
 
 ## Deliberately deferred
