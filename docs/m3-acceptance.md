@@ -35,5 +35,5 @@
 ## 遗留
 
 - 100 条挂载准确率复测：当前 40 条、2 个可挂载节点，数字区分度有限；建议树重构落地且记忆到 100 条后重跑 `go run ./scripts/loo <data-dir>`。
-- 真实仓的重排提案（tmp/gardener-proposal.json）待人批准后执行；批准前真实仓保持扁平现状。
+- 真实仓的重排提案待人批准后执行；批准前真实仓保持扁平现状。提案含私有条目 ID，不入代码仓，可由 `gardener data` + Agent 随时重新生成并 dry-run 复核。
 - split/merge 无专用原语，按 create+move+archive 组合表达；若真实语料证明高频，再考虑糖衣操作。
