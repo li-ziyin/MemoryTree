@@ -2,7 +2,9 @@ package main
 
 import (
 	"bytes"
+	"encoding/json"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -47,5 +49,60 @@ func TestRunMCPRejectsInvalidArguments(t *testing.T) {
 	}
 	if !strings.Contains(stderr.String(), "usage: memoryd mcp") {
 		t.Errorf("stderr = %q", stderr.String())
+	}
+}
+
+func TestRunUsageErrors(t *testing.T) {
+	cases := []struct {
+		name string
+		args []string
+	}{
+		{"no args", nil},
+		{"unknown command", []string{"frobnicate"}},
+		{"init missing dir", []string{"init"}},
+		{"validate missing dir", []string{"validate"}},
+		{"import-legacy missing flags", []string{"import-legacy"}},
+		{"index missing dir", []string{"index"}},
+		{"mcp missing dir", []string{"mcp"}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			var stdout, stderr bytes.Buffer
+			if code := run(tc.args, strings.NewReader(""), &stdout, &stderr); code != 2 {
+				t.Fatalf("code = %d, want 2; stderr: %s", code, stderr.String())
+			}
+		})
+	}
+}
+
+func TestRunValidateAndIndexExitCodes(t *testing.T) {
+	dir := t.TempDir()
+	var stdout, stderr bytes.Buffer
+
+	if code := run([]string{"init", dir}, strings.NewReader(""), &stdout, &stderr); code != 0 {
+		t.Fatalf("init code = %d, stderr: %s", code, stderr.String())
+	}
+	if code := run([]string{"validate", dir}, strings.NewReader(""), &stdout, &stderr); code != 0 {
+		t.Fatalf("validate code = %d, stderr: %s", code, stderr.String())
+	}
+	stdout.Reset()
+	if code := run([]string{"index", "--json", dir}, strings.NewReader(""), &stdout, &stderr); code != 0 {
+		t.Fatalf("index code = %d, stderr: %s", code, stderr.String())
+	}
+	if !json.Valid(bytes.TrimSpace(stdout.Bytes())) {
+		t.Fatalf("index --json emitted invalid JSON: %s", stdout.String())
+	}
+
+	// Corrupt one managed file: validation errors must exit 1, and index
+	// must refuse and leave the previous index untouched.
+	nodePath := filepath.Join(dir, "global", "node.md")
+	if err := os.WriteFile(nodePath, []byte("not frontmatter\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if code := run([]string{"validate", dir}, strings.NewReader(""), &stdout, &stderr); code != 1 {
+		t.Fatalf("corrupt validate code = %d, want 1", code)
+	}
+	if code := run([]string{"index", dir}, strings.NewReader(""), &stdout, &stderr); code != 1 {
+		t.Fatalf("corrupt index code = %d, want 1", code)
 	}
 }
