@@ -12,6 +12,7 @@ coverage.*
 .vscode/
 .DS_Store
 Thumbs.db
+.mimosa/
 
 # Local data repositories must never live inside the source tree.
 # Use a separate directory (default: ~/.memorytree).
