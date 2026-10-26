@@ -12,7 +12,9 @@ import (
 	"strings"
 	"time"
 
+	"github.com/li-ziyin/memorytree/internal/gitio"
 	"github.com/li-ziyin/memorytree/internal/ids"
+	"github.com/li-ziyin/memorytree/internal/index"
 	"github.com/li-ziyin/memorytree/internal/model"
 	"github.com/li-ziyin/memorytree/internal/validate"
 )
@@ -91,12 +93,15 @@ func validateSnapshot(root string) (*validate.Result, *validate.Snapshot, error)
 
 // AddEntry validates the input, writes the entry file atomically, rewrites
 // superseded entries, commits to git, and refreshes the index — all under
-// the single-writer lock. The repository must already validate clean; the
-// write leaves it clean. Concurrent writers fail fast with ErrWriteLocked
-// and may retry.
+// the single-writer lock. The repository must already validate clean and be
+// a git work tree; the write leaves both clean. Concurrent writers fail
+// fast with ErrWriteLocked and may retry.
 func AddEntry(dataDir string, in EntryInput) (*AddResult, error) {
 	root, err := filepath.Abs(dataDir)
 	if err != nil {
+		return nil, err
+	}
+	if err := gitio.Preflight(root); err != nil {
 		return nil, err
 	}
 	lock, err := acquireWriteLock(root)
@@ -132,12 +137,52 @@ func AddEntry(dataDir string, in EntryInput) (*AddResult, error) {
 	if err != nil {
 		return nil, err
 	}
+	rels := []string{relFromRoot(root, path)}
 	if len(entry.Supersedes) > 0 {
-		if _, err := supersedeOldEntries(root, snap, entry.ID, entry.Supersedes); err != nil {
+		supRels, err := supersedeOldEntries(root, snap, entry.ID, entry.Supersedes)
+		if err != nil {
 			return nil, err
 		}
+		rels = append(rels, supRels...)
 	}
-	return &AddResult{ID: entry.ID, Path: path}, nil
+
+	message := fmt.Sprintf("memoryd: add %q", entry.Title)
+	if len(entry.Supersedes) > 0 {
+		message = fmt.Sprintf("memoryd: add %q (supersedes %d)", entry.Title, len(entry.Supersedes))
+	}
+	gen, err := finishWrite(root, rels, message)
+	if err != nil {
+		return nil, err
+	}
+	return &AddResult{ID: entry.ID, Path: path, Generation: gen, Committed: true}, nil
+}
+
+// finishWrite commits the written paths and refreshes the index, applying
+// the D10 failure contract: when the commit fails the files stay and the
+// index is still refreshed, but the caller gets an error naming the manual
+// recovery command.
+func finishWrite(root string, rels []string, message string) (int64, error) {
+	commitErr := gitio.Commit(root, rels, message)
+	var gen int64
+	if build, err := index.Build(root, index.BuildOptions{}); err == nil {
+		gen = build.Generation
+	}
+	if commitErr != nil {
+		return 0, fmt.Errorf(
+			"files written but git commit failed: %v; recover with: git -C %s add %s && git -C %s commit -m %q",
+			commitErr, root, strings.Join(rels, " "), root, message)
+	}
+	return gen, nil
+}
+
+// relFromRoot converts an absolute path inside root into a POSIX rel path
+// for git.
+func relFromRoot(root, abs string) string {
+	rel, err := filepath.Rel(root, abs)
+	if err != nil {
+		return filepath.ToSlash(abs)
+	}
+	return filepath.ToSlash(rel)
 }
 
 // resolveNode finds the host node by UUIDv7 or by slug path; nil when absent.

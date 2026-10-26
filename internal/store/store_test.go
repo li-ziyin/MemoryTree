@@ -1,11 +1,14 @@
 package store
 
 import (
+	"errors"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
 
+	"github.com/li-ziyin/memorytree/internal/gitio"
 	"github.com/li-ziyin/memorytree/internal/index"
 	"github.com/li-ziyin/memorytree/internal/initrepo"
 )
@@ -20,11 +23,29 @@ func validInput() EntryInput {
 	}
 }
 
+// newRepo initializes a data repository that is also a git work tree, the
+// shape every real write target has.
 func newRepo(t *testing.T) string {
 	t.Helper()
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git is not installed; write-path tests require it")
+	}
 	root := t.TempDir()
 	if _, err := initrepo.Init(initrepo.Options{Root: root, Title: "Test"}); err != nil {
 		t.Fatal(err)
+	}
+	for _, args := range [][]string{
+		{"init", "-q"},
+		{"config", "user.email", "test@example.com"},
+		{"config", "user.name", "Test"},
+		{"config", "commit.gpgsign", "false"},
+		{"add", "-A"},
+		{"commit", "-q", "-m", "init: freeze baseline"},
+	} {
+		cmd := exec.Command("git", append([]string{"-C", root}, args...)...)
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %v: %s", args, err, out)
+		}
 	}
 	return root
 }
@@ -57,6 +78,13 @@ func TestAddEntryWritesValidFile(t *testing.T) {
 	}
 	if res.ID == "" || !strings.HasSuffix(filepath.ToSlash(res.Path), ".md") {
 		t.Fatalf("result = %+v", res)
+	}
+	if !res.Committed || res.Generation < 1 {
+		t.Errorf("committed/generation = %v/%d, want true/>=1", res.Committed, res.Generation)
+	}
+	// The entry is committed to git: the work tree is clean afterwards.
+	if out, err := exec.Command("git", "-C", root, "status", "--porcelain").CombinedOutput(); err != nil || len(strings.TrimSpace(string(out))) > 0 {
+		t.Errorf("git status not clean: %v: %s", err, out)
 	}
 
 	// The written tree must validate and be indexed.
@@ -141,6 +169,23 @@ func TestAddEntryRejectsInvalidInput(t *testing.T) {
 				t.Errorf("rejected write left %d file(s) behind", n)
 			}
 		})
+	}
+}
+
+func TestAddEntryRequiresGitRepository(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git is not installed")
+	}
+	root := t.TempDir()
+	if _, err := initrepo.Init(initrepo.Options{Root: root, Title: "Test"}); err != nil {
+		t.Fatal(err)
+	}
+	_, err := AddEntry(root, validInput())
+	if !errors.Is(err, gitio.ErrNotRepository) {
+		t.Fatalf("err = %v, want ErrNotRepository", err)
+	}
+	if n := countFiles(t, filepath.Join(root, "global", "memories")); n != 0 {
+		t.Errorf("rejected write left %d file(s)", n)
 	}
 }
 

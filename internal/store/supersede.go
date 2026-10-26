@@ -6,6 +6,7 @@ import (
 
 	"github.com/li-ziyin/memorytree/internal/docfile"
 	"github.com/li-ziyin/memorytree/internal/format"
+	"github.com/li-ziyin/memorytree/internal/gitio"
 	"github.com/li-ziyin/memorytree/internal/model"
 	"github.com/li-ziyin/memorytree/internal/validate"
 )
@@ -44,7 +45,8 @@ func entryByID(snap *validate.Snapshot, id string) (validate.EntryInfo, bool) {
 }
 
 // supersedeOldEntries flips every superseded target of a just-written entry
-// to status superseded and points superseded_by at it (V-SUP-2/3/5).
+// to status superseded and points superseded_by at it (V-SUP-2/3/5). It
+// returns the repository-relative paths it rewrote.
 func supersedeOldEntries(root string, snap *validate.Snapshot, newID string, supersedes []string) ([]string, error) {
 	var rewritten []string
 	for _, id := range supersedes {
@@ -52,25 +54,26 @@ func supersedeOldEntries(root string, snap *validate.Snapshot, newID string, sup
 		if !ok {
 			return nil, inputf("V-SUP-1", "supersedes target %s vanished during the write", id)
 		}
-		path, err := rewriteEntry(root, target.Path, func(e *model.Entry) {
+		if _, err := rewriteEntry(root, target.Path, func(e *model.Entry) {
 			e.Status = model.EntrySuperseded
 			newIDCopy := newID
 			e.SupersededBy = &newIDCopy
 			e.UpdatedAt = now().Format(timeFormat)
-		})
-		if err != nil {
+		}); err != nil {
 			return nil, fmt.Errorf("rewrite superseded entry %s: %w", id, err)
 		}
-		rewritten = append(rewritten, path)
+		rewritten = append(rewritten, target.Path)
 	}
 	return rewritten, nil
 }
 
 // SupersedeResult describes one SupersedeEntry call.
 type SupersedeResult struct {
-	OldPath string `json:"old_path"`
-	ByID    string `json:"by_id"`
-	ByPath  string `json:"by_path"`
+	OldPath    string `json:"old_path"`
+	ByID       string `json:"by_id"`
+	ByPath     string `json:"by_path"`
+	Generation int64  `json:"generation"`
+	Committed  bool   `json:"committed"`
 }
 
 // SupersedeEntry links two existing entries: old becomes superseded and
@@ -78,6 +81,9 @@ type SupersedeResult struct {
 func SupersedeEntry(dataDir, oldID, byID string) (*SupersedeResult, error) {
 	root, err := filepath.Abs(dataDir)
 	if err != nil {
+		return nil, err
+	}
+	if err := gitio.Preflight(root); err != nil {
 		return nil, err
 	}
 	lock, err := acquireWriteLock(root)
@@ -133,5 +139,10 @@ func SupersedeEntry(dataDir, oldID, byID string) (*SupersedeResult, error) {
 	if err != nil {
 		return nil, fmt.Errorf("rewrite superseding entry: %w", err)
 	}
-	return &SupersedeResult{OldPath: oldPath, ByID: byID, ByPath: byPath}, nil
+	gen, err := finishWrite(root, []string{old.Path, by.Path},
+		fmt.Sprintf("memoryd: supersede %s by %s", oldID, byID))
+	if err != nil {
+		return nil, err
+	}
+	return &SupersedeResult{OldPath: oldPath, ByID: byID, ByPath: byPath, Generation: gen, Committed: true}, nil
 }
