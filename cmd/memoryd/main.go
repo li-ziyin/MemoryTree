@@ -11,6 +11,7 @@ import (
 	"strconv"
 
 	"github.com/li-ziyin/memorytree/internal/bench"
+	"github.com/li-ziyin/memorytree/internal/inbox"
 	"github.com/li-ziyin/memorytree/internal/index"
 	"github.com/li-ziyin/memorytree/internal/initrepo"
 	"github.com/li-ziyin/memorytree/internal/legacy"
@@ -52,6 +53,8 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		return runAdd(args[1:], stdin, stdout, stderr)
 	case "supersede":
 		return runSupersede(args[1:], stdout, stderr)
+	case "inbox":
+		return runInbox(args[1:], stdin, stdout, stderr)
 	case "version":
 		fmt.Fprintf(stdout, "memoryd %s (commit %s, built %s)\n", version, commit, date)
 		return 0
@@ -357,6 +360,58 @@ func runSupersede(args []string, stdout, stderr io.Writer) int {
 	return 0
 }
 
+func runInbox(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
+	fs := flag.NewFlagSet("inbox", flag.ContinueOnError)
+	fs.SetOutput(stderr)
+	file := fs.String("file", "-", "input file, - for stdin")
+	source := fs.String("source", "manual", "who captured the text")
+	list := fs.Bool("list", false, "list stored captures")
+	if err := fs.Parse(args); err != nil {
+		if errors.Is(err, flag.ErrHelp) {
+			return 0
+		}
+		return 2
+	}
+	if fs.NArg() != 1 {
+		fmt.Fprintln(stderr, "usage: memoryd inbox [--file PATH] [--source NAME] [--list] <data-dir>")
+		return 2
+	}
+	dir := fs.Arg(0)
+	if *list {
+		names, err := inbox.List(dir)
+		if err != nil {
+			fmt.Fprintf(stderr, "memoryd: cannot list inbox: %v\n", err)
+			return 2
+		}
+		for _, name := range names {
+			fmt.Fprintln(stdout, name)
+		}
+		return 0
+	}
+	var data []byte
+	var err error
+	if *file == "-" {
+		data, err = io.ReadAll(stdin)
+	} else {
+		data, err = os.ReadFile(*file)
+	}
+	if err != nil {
+		fmt.Fprintf(stderr, "memoryd: cannot read input: %v\n", err)
+		return 2
+	}
+	if len(data) == 0 {
+		fmt.Fprintln(stderr, "memoryd: refusing to store an empty capture")
+		return 2
+	}
+	path, err := inbox.Append(dir, *source, data)
+	if err != nil {
+		fmt.Fprintf(stderr, "memoryd: inbox failed: %v\n", err)
+		return 1
+	}
+	fmt.Fprintf(stdout, "stored %s\n", path)
+	return 0
+}
+
 func runValidate(args []string, stdout, stderr io.Writer) int {
 	fs := flag.NewFlagSet("validate", flag.ContinueOnError)
 	fs.SetOutput(stderr)
@@ -416,6 +471,8 @@ Usage:
   memoryd add <data-dir> < entry.json       write one memory entry
   memoryd supersede --old ID --by ID <data-dir>
                                             link an existing supersede pair
+  memoryd inbox [--file PATH] [--source NAME] [--list] <data-dir>
+                                            append a raw capture to .inbox/
   memoryd version                           print version information
   memoryd help                              show this help
 

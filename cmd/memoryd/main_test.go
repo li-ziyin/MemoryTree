@@ -256,6 +256,42 @@ func TestRunAddAndSupersede(t *testing.T) {
 	}
 }
 
+func TestRunInbox(t *testing.T) {
+	dir := writeRepo(t)
+
+	var stdout, stderr bytes.Buffer
+	code := run([]string{"inbox", "--source", "zcode", dir}, strings.NewReader("用户偏好先定方案。"), &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("inbox code = %d, stderr: %s", code, stderr.String())
+	}
+	if !strings.Contains(stdout.String(), ".inbox") {
+		t.Fatalf("stdout = %s", stdout.String())
+	}
+
+	stdout.Reset()
+	stderr.Reset()
+	code = run([]string{"inbox", "--list", dir}, strings.NewReader(""), &stdout, &stderr)
+	if code != 0 || !strings.Contains(stdout.String(), ".md") {
+		t.Fatalf("inbox --list code = %d stdout %s stderr %s", code, stdout.String(), stderr.String())
+	}
+
+	// The capture stays out of the managed tree and of git.
+	if code := run([]string{"validate", dir}, strings.NewReader(""), io.Discard, &bytes.Buffer{}); code != 0 {
+		t.Fatalf("validate after inbox = %d", code)
+	}
+	if out, err := exec.Command("git", "-C", dir, "status", "--porcelain", "--", ".inbox").CombinedOutput(); err != nil || strings.TrimSpace(string(out)) != "" {
+		t.Errorf(".inbox leaked into git: %v: %s", err, out)
+	}
+
+	stderr.Reset()
+	if code := run([]string{"inbox", dir}, strings.NewReader(""), io.Discard, &stderr); code != 2 {
+		t.Fatalf("inbox empty code = %d, want 2", code)
+	}
+	if code := run([]string{"inbox"}, strings.NewReader("x"), io.Discard, &bytes.Buffer{}); code != 2 {
+		t.Fatalf("inbox usage code = %d, want 2", code)
+	}
+}
+
 func TestRunAddUsageAndValidation(t *testing.T) {
 	dir := writeRepo(t)
 
