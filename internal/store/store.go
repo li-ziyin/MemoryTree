@@ -75,13 +75,21 @@ type AddResult struct {
 var now = func() time.Time { return time.Now().UTC() }
 
 // AddEntry validates the input, writes the entry file atomically, rewrites
-// superseded entries, commits to git, and refreshes the index. The
-// repository must already validate clean; the write leaves it clean.
+// superseded entries, commits to git, and refreshes the index — all under
+// the single-writer lock. The repository must already validate clean; the
+// write leaves it clean. Concurrent writers fail fast with ErrWriteLocked
+// and may retry.
 func AddEntry(dataDir string, in EntryInput) (*AddResult, error) {
 	root, err := filepath.Abs(dataDir)
 	if err != nil {
 		return nil, err
 	}
+	lock, err := acquireWriteLock(root)
+	if err != nil {
+		return nil, err
+	}
+	defer lock.release()
+
 	res, snap, err := validate.ValidateWithSnapshot(root)
 	if err != nil {
 		return nil, err

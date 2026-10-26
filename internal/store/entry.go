@@ -190,16 +190,31 @@ func slugFromTitle(title string) string {
 	return slug
 }
 
-// entryFileName is <YYYY-MM-DD>-<slug>.md with a short-id suffix on collision.
+// entryFileName is <YYYY-MM-DD>-<slug>.md. Collisions are disambiguated with
+// the RANDOM tail of the entry UUID — the head is a millisecond timestamp
+// shared by every entry written in the same minute, so using it would make
+// same-titled entries overwrite each other. A counter breaks the remaining
+// theoretical clash.
 func entryFileName(entry *model.Entry, created string, taken map[string]bool) string {
 	date := created
 	if t, err := time.Parse(time.RFC3339, created); err == nil {
 		date = t.Format("2006-01-02")
 	}
 	slug := slugFromTitle(entry.Title)
-	base := fmt.Sprintf("%s-%s.md", date, slug)
-	if !taken[base] {
-		return base
+	base := fmt.Sprintf("%s-%s", date, slug)
+	if !taken[base+".md"] {
+		return base + ".md"
 	}
-	return fmt.Sprintf("%s-%s-%s.md", date, slug, entry.ID[:8])
+	tail := entry.ID[28:36]
+	for n := 1; ; n++ {
+		var name string
+		if n == 1 {
+			name = fmt.Sprintf("%s-%s.md", base, tail)
+		} else {
+			name = fmt.Sprintf("%s-%s-%d.md", base, tail, n)
+		}
+		if !taken[name] {
+			return name
+		}
+	}
 }

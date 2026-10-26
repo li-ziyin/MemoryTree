@@ -161,7 +161,7 @@ func TestAddEntrySlugAndCollision(t *testing.T) {
 	if !strings.Contains(firstBase, "docker-port-playbook") {
 		t.Errorf("first name = %s", firstBase)
 	}
-	if secondBase == firstBase || !strings.Contains(secondBase, second.ID[:8]) {
+	if secondBase == firstBase || !strings.Contains(secondBase, second.ID[28:36]) {
 		t.Errorf("collision name = %s (first %s)", secondBase, firstBase)
 	}
 	if _, err := index.Build(root, index.BuildOptions{}); err != nil {
