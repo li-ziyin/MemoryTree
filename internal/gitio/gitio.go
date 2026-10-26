@@ -34,6 +34,18 @@ func Preflight(root string) error {
 	return nil
 }
 
+// hardeningArgs are prepended to every git invocation so a hostile data
+// repository cannot execute code through its own config: hooks are pointed
+// at a directory that never exists (an empty value would fall back to the
+// default hooks directory), and fsmonitor probes are disabled. Filter
+// drivers configured by the repository remain possible only for an attacker
+// who already controls the local repository, which equals the invoker's
+// own privileges.
+var hardeningArgs = []string{
+	"-c", "core.hooksPath=./.memoryd-no-hooks",
+	"-c", "core.fsmonitor=false",
+}
+
 // Commit stages exactly the given repository-relative paths and commits
 // them with message. Pathspec commits keep unrelated staged work out of
 // memoryd's commits.
@@ -50,7 +62,7 @@ func Commit(root string, relPaths []string, message string) error {
 }
 
 func run(args []string) (string, error) {
-	cmd := exec.Command("git", args...)
+	cmd := exec.Command("git", append(append([]string{}, hardeningArgs...), args...)...)
 	out, err := cmd.CombinedOutput()
 	return strings.TrimSpace(string(out)), err
 }

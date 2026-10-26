@@ -25,6 +25,7 @@
 - 单写者锁 `.index/write.lock`（O_EXCL；>10 分钟视为崩溃遗留回收）；竞争者快速失败可重试。
 - 失败契约：预检失败零写入；文件写入后提交失败 → 文件保留、索引已刷新、错误信息含手工恢复命令。
 - MCP 写工具带 V- 规则码的 ToolError；写后同会话立即可检索（envelope 报告新 generation）。
+- git 调用一律带 `core.hooksPath=./.memoryd-no-hooks` 与 `core.fsmonitor=false`：恶意数据仓无法借自身钩子/配置在提交时执行代码（2026-10-27 mimosa 中危人工复核后的加固，含对照实验与回归测试 `TestCommitNeverRunsRepositoryHooks`）。
 
 ## 遗留
 

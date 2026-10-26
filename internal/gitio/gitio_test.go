@@ -84,3 +84,37 @@ func TestCommitOnlyTouchesPathspec(t *testing.T) {
 		t.Fatalf("status = %q, want only other.md untracked", out)
 	}
 }
+
+// A hostile data repository must not execute code through its own hooks:
+// Commit points core.hooksPath at a directory that never exists.
+func TestCommitNeverRunsRepositoryHooks(t *testing.T) {
+	root := gitRepo(t)
+	hooksDir := filepath.Join(root, ".git", "hooks")
+	if err := os.MkdirAll(hooksDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	marker := filepath.Join(root, "pwned-marker")
+	hook := "#!/bin/sh\nprintf x > " + marker + "\n"
+	if err := os.WriteFile(filepath.Join(hooksDir, "pre-commit"), []byte(hook), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	entry := filepath.Join(root, "entry.md")
+	if err := os.WriteFile(entry, []byte("x"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := Commit(root, []string{"entry.md"}, "memoryd: add entry"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(marker); !os.IsNotExist(err) {
+		t.Fatalf("repository hook ran during Commit: %v", err)
+	}
+	// The commit itself still happened.
+	out, err := exec.Command("git", "-C", root, "log", "--oneline", "-1").CombinedOutput()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(out), "memoryd: add entry") {
+		t.Fatalf("log = %s", out)
+	}
+}
