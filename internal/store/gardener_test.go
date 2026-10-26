@@ -224,6 +224,63 @@ func TestGardenerFullRestructureRound(t *testing.T) {
 	}
 }
 
+func TestGardenerMoveEntryDropsRedundantDeltaTags(t *testing.T) {
+	root := newRepo(t)
+	if _, err := ApplyGardenerProposal(root, &gardener.Proposal{
+		Reason: "seed",
+		Operations: []gardener.Operation{
+			{Op: gardener.OpCreateNode, Target: ".", Kind: model.KindProject, Slug: "src",
+				Title: "src", Summary: "source host"},
+			{Op: gardener.OpCreateNode, Target: ".", Kind: model.KindProject, Slug: "dst",
+				Title: "dst", Summary: "target host", TagsDelta: []string{"go"}},
+		},
+	}, GardenerOptions{}); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	in := validInput()
+	in.Node = "src"
+	in.TagsDelta = []string{"go", "extra"}
+	add, err := AddEntry(root, in)
+	if err != nil {
+		t.Fatalf("add: %v", err)
+	}
+
+	res, err := ApplyGardenerProposal(root, &gardener.Proposal{
+		Reason: "absorb redundant delta",
+		Operations: []gardener.Operation{
+			{Op: gardener.OpMoveEntry, Entry: add.ID, Target: "dst"},
+		},
+	}, GardenerOptions{})
+	if err != nil {
+		t.Fatalf("move: %v", err)
+	}
+	// The plan must record the absorbed tag.
+	foundDrop := false
+	for _, s := range res.Report.Steps {
+		for _, tag := range s.DropTags {
+			if tag == "go" {
+				foundDrop = true
+			}
+		}
+	}
+	if !foundDrop {
+		t.Fatalf("plan did not drop the redundant tag: %+v", res.Report.Steps)
+	}
+
+	snap := mustValidateClean(t, root) // V-TAG-2 would fail without the drop
+	for _, e := range snap.Entries {
+		if e.ID != add.ID {
+			continue
+		}
+		if len(e.TagsDelta) != 1 || e.TagsDelta[0] != "extra" {
+			t.Fatalf("entry delta after move = %v, want [extra]", e.TagsDelta)
+		}
+		if len(e.Tags) != 2 { // go + extra, both still effective
+			t.Fatalf("effective tags = %v, want [extra go]", e.Tags)
+		}
+	}
+}
+
 func TestGardenerExecutorRollbackRestoresBytes(t *testing.T) {
 	root := newRepo(t)
 	snap := mustValidateClean(t, root)

@@ -388,6 +388,19 @@ func (ex *gardenerExecutor) moveEntry(step gardener.Step) error {
 
 	entry.Node = targetID
 	entry.UpdatedAt = now().Format(timeFormat)
+	if len(step.DropTags) > 0 {
+		drop := make(map[string]bool, len(step.DropTags))
+		for _, tag := range step.DropTags {
+			drop[tag] = true
+		}
+		kept := entry.TagsDelta[:0]
+		for _, tag := range entry.TagsDelta {
+			if !drop[tag] {
+				kept = append(kept, tag)
+			}
+		}
+		entry.TagsDelta = kept
+	}
 	data, err := docfile.MarshalFrontmatter(&entry, doc.Body)
 	if err != nil {
 		return err

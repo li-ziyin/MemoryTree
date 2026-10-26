@@ -48,6 +48,7 @@ type EntryInfo struct {
 	Title        string
 	Summary      string
 	Tags         []string
+	TagsDelta    []string
 	Source       model.Source
 	Supersedes   []string
 	SupersededBy *string
@@ -121,6 +122,7 @@ func (v *validator) snapshot() *Snapshot {
 			Title:        e.Title,
 			Summary:      e.Summary,
 			Tags:         sortedSet(tags),
+			TagsDelta:    sortedSet(rec.tags),
 			Source:       e.Source,
 			Supersedes:   append([]string(nil), e.Supersedes...),
 			SupersededBy: supersededBy,

@@ -119,6 +119,9 @@ type Step struct {
 	TagsDelta  []string `json:"tags_delta,omitempty"` // create_node, normalized
 	// Sensitivity of a created node, already resolved (never empty).
 	Sensitivity string `json:"sensitivity,omitempty"`
+	// DropTags of a move_entry: entry delta tags the target node already
+	// provides; the executor removes them from the entry (V-TAG-2).
+	DropTags []string `json:"drop_tags,omitempty"`
 }
 
 // OpReport is the verdict for one operation.
@@ -176,6 +179,7 @@ type simState struct {
 	entryNode        map[string]string
 	entryFile        map[string]string // entry id -> repo-relative file path
 	entrySensitivity map[string]string
+	entryDelta       map[string][]string // entry id -> own tags_delta
 }
 
 func newSimState(snap *validate.Snapshot) *simState {
@@ -184,6 +188,7 @@ func newSimState(snap *validate.Snapshot) *simState {
 		entryNode:        map[string]string{},
 		entryFile:        map[string]string{},
 		entrySensitivity: map[string]string{},
+		entryDelta:       map[string][]string{},
 	}
 	for _, n := range snap.Nodes {
 		delta := map[string]bool{}
@@ -204,6 +209,7 @@ func newSimState(snap *validate.Snapshot) *simState {
 		st.entryNode[e.ID] = e.NodeID
 		st.entryFile[e.ID] = e.Path
 		st.entrySensitivity[e.ID] = e.Sensitivity
+		st.entryDelta[e.ID] = e.TagsDelta
 	}
 	st.recompute()
 	return st
@@ -388,16 +394,30 @@ func (st *simState) applyMoveEntry(op Operation) (string, string, []string, stri
 		return CodeSensEntry, fmt.Sprintf("entry %s is %s, weaker than %s (%s)",
 			op.Entry, st.entrySensitivity[op.Entry], st.path(target.id), target.sensitivity), nil, "", Step{}
 	}
+	// Tags the target node already provides become redundant in the entry's
+	// own delta (V-TAG-2); the move drops them so effective tags stay equal.
+	var drop []string
+	for _, tag := range st.entryDelta[op.Entry] {
+		if target.effective[tag] {
+			drop = append(drop, tag)
+		}
+	}
 	oldHost := st.path(hostID)
 	st.entryNode[op.Entry] = target.id
+	st.entryDelta[op.Entry] = minusSet(st.entryDelta[op.Entry], target.effective)
 	step := Step{
 		Op: OpMoveEntry, Entry: op.Entry,
 		Node:     st.ref(hostID),
 		Parent:   st.ref(target.id),
 		FromPath: st.entryFile[op.Entry],
 		ToPath:   st.path(target.id),
+		DropTags: drop,
 	}
-	return "", "", nil, fmt.Sprintf("%s: %s -> %s", op.Entry, oldHost, st.path(target.id)), step
+	detail := fmt.Sprintf("%s: %s -> %s", op.Entry, oldHost, st.path(target.id))
+	if len(drop) > 0 {
+		detail += fmt.Sprintf(" (delta drops redundant %s)", strings.Join(drop, ","))
+	}
+	return "", "", nil, detail, step
 }
 
 func (st *simState) applyRetagNode(op Operation) (string, string, []string, string, Step) {
@@ -674,6 +694,16 @@ func entrySensitivities(snap *validate.Snapshot) map[string]string {
 }
 
 func rank(level string) int { return model.SensitivityRank(level) }
+
+func minusSet(tags []string, drop map[string]bool) []string {
+	out := make([]string, 0, len(tags))
+	for _, tag := range tags {
+		if !drop[tag] {
+			out = append(out, tag)
+		}
+	}
+	return out
+}
 
 func sortedKeys(set map[string]bool) []string {
 	out := make([]string, 0, len(set))
