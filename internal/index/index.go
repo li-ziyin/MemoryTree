@@ -29,7 +29,7 @@ const (
 	// FileName is the SQLite database file inside DirName.
 	FileName = "index.sqlite"
 
-	schemaVersion = 1
+	schemaVersion = 2
 )
 
 var (

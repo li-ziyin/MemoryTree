@@ -66,7 +66,7 @@ func Generate(root string, n int) error {
 	for i := 0; i < n; i++ {
 		title := fmt.Sprintf("规模条目 %d：docker 端口与网关排障 %d", i, i%50)
 		if i%100 == 0 {
-			title = fmt.Sprintf("金丝雀 needle-%d 规模条目 %d", i%10, i)
+			title = fmt.Sprintf("金丝雀 needle-%d 规模条目 %d", i/100%10, i)
 		}
 		m := entryMeta{
 			Schema: "memorytree.entry/v1",

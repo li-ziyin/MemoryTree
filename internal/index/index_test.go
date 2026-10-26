@@ -186,9 +186,9 @@ func TestSearchFTSAndShortQueryFallback(t *testing.T) {
 	}{
 		{name: "three rune Chinese uses trigram", query: "开发者", want: userEntryID},
 		{name: "ASCII trigram", query: "SSE", want: sseEntryID},
-		{name: "two rune Chinese falls back to LIKE", query: "解码", want: sseEntryID},
+		{name: "two rune Chinese uses rune-split FTS", query: "解码", want: sseEntryID},
 		{name: "two rune Chinese in title", query: "用户", want: userEntryID},
-		{name: "mixed short token falls back to LIKE", query: "SSE 解码", want: sseEntryID},
+		{name: "mixed short token uses rune-split FTS", query: "SSE 解码", want: sseEntryID},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -391,7 +391,7 @@ func TestIncompatibleSchemaRequiresRebuild(t *testing.T) {
 	}
 }
 
-func TestLikeFallbackRanksTitleThenSummaryThenBody(t *testing.T) {
+func TestShortQueryRanksTitleThenSummaryThenBody(t *testing.T) {
 	root := exampleCopy(t)
 	write := func(filename, id, title, summary, body, date string) {
 		t.Helper()

@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"unicode"
 	"unicode/utf8"
 
 	"golang.org/x/text/unicode/norm"
@@ -60,8 +61,9 @@ type Hit struct {
 }
 
 // Search queries the index. Queries whose tokens are all at least three
-// characters long use the FTS5 trigram index; shorter tokens fall back to a
-// LIKE scan because trigram indexes cannot match them.
+// characters long use the FTS5 trigram index; queries with shorter tokens
+// (most Chinese lookups) use entries_fts_chars, a rune-split unicode61 index
+// where a phrase over space-joined runes is an exact substring match.
 func (ix *Index) Search(ctx context.Context, opts SearchOptions) ([]Hit, error) {
 	if ctx == nil {
 		ctx = context.Background()
@@ -102,15 +104,18 @@ func (ix *Index) Search(ctx context.Context, opts SearchOptions) ([]Hit, error) 
 		args = append(args, filterArgs...)
 		query += " ORDER BY bm25(entries_fts), e.updated_at DESC, e.id LIMIT ?"
 	default:
-		query = fmt.Sprintf(selectColumns, "entries e")
-		likeConditions, likeArgs := likeConditions(tokens)
-		conditions = append(conditions, likeConditions...)
-		rankExpr, rankArgs := likeRanking(tokens)
-		query += whereClause(conditions)
-		query += " ORDER BY " + rankExpr + " DESC, e.updated_at DESC, e.id LIMIT ?"
+		expr, ok := charExpression(tokens)
+		if !ok {
+			return []Hit{}, nil
+		}
+		query = fmt.Sprintf(selectColumns, "entries_fts_chars JOIN entries e ON e.rowid = entries_fts_chars.rowid")
+		query += " WHERE entries_fts_chars MATCH ?"
+		args = append(args, expr)
+		for _, condition := range conditions {
+			query += " AND " + condition
+		}
 		args = append(args, filterArgs...)
-		args = append(args, likeArgs...)
-		args = append(args, rankArgs...)
+		query += " ORDER BY bm25(entries_fts_chars, 8.0, 4.0, 2.0, 1.0), e.updated_at DESC, e.id LIMIT ?"
 	}
 	args = append(args, opts.Limit)
 
@@ -213,40 +218,33 @@ func ftsExpression(tokens []string) string {
 	return strings.Join(quoted, " AND ")
 }
 
-func likeConditions(tokens []string) ([]string, []any) {
-	conditions := make([]string, 0, len(tokens))
-	args := make([]any, 0, len(tokens)*3)
+// charExpression converts every token into an FTS5 phrase over its runes so
+// one- and two-character queries — most Chinese lookups — match the
+// rune-split index with bm25 ranking instead of a table scan.
+func charExpression(tokens []string) (string, bool) {
+	parts := make([]string, 0, len(tokens))
 	for _, token := range tokens {
-		pattern := likePattern(token)
-		conditions = append(conditions,
-			`(e.title LIKE ? ESCAPE '\' OR e.summary LIKE ? ESCAPE '\' OR e.body LIKE ? ESCAPE '\')`)
-		args = append(args, pattern, pattern, pattern)
+		var kept []rune
+		for _, r := range token {
+			if r < 0x80 && !unicode.IsLetter(r) && !unicode.IsDigit(r) {
+				continue // unicode61 never indexes ASCII punctuation
+			}
+			kept = append(kept, r)
+		}
+		if len(kept) == 0 {
+			return "", false
+		}
+		quoted := make([]string, len(kept))
+		for i, r := range kept {
+			if r == '"' {
+				quoted[i] = `""`
+			} else {
+				quoted[i] = string(r)
+			}
+		}
+		parts = append(parts, `"`+strings.Join(quoted, " ")+`"`)
 	}
-	return conditions, args
-}
-
-// likeRanking scores title matches twice as heavily as summary matches.
-// Body-only matches score zero, so a newer body-only entry cannot outrank a
-// title or summary match when the LIKE fallback has no BM25 ranking.
-func likeRanking(tokens []string) (string, []any) {
-	titleTerms := make([]string, len(tokens))
-	summaryTerms := make([]string, len(tokens))
-	args := make([]any, 0, len(tokens)*2)
-	for i, token := range tokens {
-		titleTerms[i] = `CASE WHEN e.title LIKE ? ESCAPE '\' THEN 1 ELSE 0 END`
-		args = append(args, likePattern(token))
-	}
-	for i, token := range tokens {
-		summaryTerms[i] = `CASE WHEN e.summary LIKE ? ESCAPE '\' THEN 1 ELSE 0 END`
-		args = append(args, likePattern(token))
-	}
-	score := "(" + strings.Join(titleTerms, " + ") + ") * 2 + (" +
-		strings.Join(summaryTerms, " + ") + ")"
-	return score, args
-}
-
-func likePattern(s string) string {
-	return "%" + escapeLike(s) + "%"
+	return strings.Join(parts, " AND "), true
 }
 
 func escapeLike(s string) string {

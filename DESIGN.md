@@ -157,8 +157,8 @@ E:\MemoryTreeData\
 - 事务性：删表、建表、写入、FTS 完整性检查在同一个 SQLite 事务内；失败回滚，旧索引保持可用。损坏或 schema 不兼容的索引需要显式 `--rebuild` 才替换。
 - 元数据：`meta` 表记录 `schema_version / repo_id / generation / fingerprint / built_at / nodes / entries`。fingerprint 为所有受管文件（`memory.yaml`、`node.md`、`memories/*.md`）内容的 SHA-256。
 - 幂等：fingerprint 未变且未指定 `--rebuild` 时不写入，generation 不变；每次实际重建 generation 加 1。
-- 表：`nodes`、`entries`、`entry_tags`，以及 external-content FTS5 表 `entries_fts(title, summary, tags, body, tokenize='trigram')`。正文只在 `entries` 存一份，`node.md` 正文不进入索引。
-- 查询：每个词至少 3 个字符时走 FTS5 trigram（中文可用）；任一词不足 3 个字符时整体回退为对 title/summary/body 的转义 LIKE。LIKE 回退按命中位置计分（标题权重 2、摘要权重 1、正文权重 0），再按更新时间排序，避免更新更近但仅正文偶然命中的条目压过标题/摘要命中。默认只返回 `active`，可按节点、类型、有效标签（AND）、状态过滤，结果上限 100 条。
+- 表：`nodes`、`entries`、`entry_tags`，external-content FTS5 表 `entries_fts(title, summary, tags, body, tokenize='trigram')`，以及 rune 拆分的 `entries_fts_chars(title, summary, tags, body, tokenize='unicode61')`。正文只在 `entries` 存一份，`node.md` 正文不进入索引。
+- 查询：每个词至少 3 个字符时走 FTS5 trigram（中文可用）；任一词不足 3 个字符时走 `entries_fts_chars`——unicode61 把每个 CJK 字符当独立 token，rune 间插空格后短语查询等价于子串匹配，bm25 提供列加权排序（标题 8、摘要 4、标签 2、正文 1）。默认只返回 `active`，可按节点、类型、有效标签（AND）、状态过滤，结果上限 100 条。`schema_version` 为 2（v1 LIKE 回退已移除）；版本不兼容的旧索引需显式 `--rebuild`。
 
 ## 5. MCP 接口
 

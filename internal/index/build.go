@@ -15,6 +15,7 @@ import (
 )
 
 var dropStatements = []string{
+	`DROP TABLE IF EXISTS entries_fts_chars`,
 	`DROP TABLE IF EXISTS entries_fts`,
 	`DROP TABLE IF EXISTS entry_tags`,
 	`DROP TABLE IF EXISTS entries`,
@@ -87,6 +88,18 @@ var schemaStatements = []string{
 		content='entries',
 		content_rowid='rowid',
 		tokenize='trigram'
+	)`,
+
+	// Rune-split mirror of the entry text. unicode61 tokenizes each CJK
+	// character separately, so a phrase over space-joined runes is an exact
+	// substring match and one- or two-character queries — the common Chinese
+	// lookup — get bm25 ranking instead of a table scan.
+	`CREATE VIRTUAL TABLE entries_fts_chars USING fts5(
+		title,
+		summary,
+		tags,
+		body,
+		tokenize='unicode61'
 	)`,
 }
 
@@ -178,7 +191,7 @@ func writeIndex(root string, snap *validate.Snapshot, generation int64, builtAt 
 	if err := insertSnapshot(ctx, tx, snap, generation, builtAt); err != nil {
 		return err
 	}
-	if err := checkIndex(ctx, tx); err != nil {
+	if err := checkIndex(ctx, tx, len(snap.Entries)); err != nil {
 		return err
 	}
 	if err := tx.Commit(); err != nil {
@@ -252,6 +265,13 @@ func insertSnapshot(ctx context.Context, tx *sql.Tx, snap *validate.Snapshot, ge
 	}
 	defer ftsStmt.Close()
 
+	charsStmt, err := tx.PrepareContext(ctx,
+		`INSERT INTO entries_fts_chars(rowid, title, summary, tags, body) VALUES (?, ?, ?, ?, ?)`)
+	if err != nil {
+		return err
+	}
+	defer charsStmt.Close()
+
 	tagStmt, err := tx.PrepareContext(ctx,
 		`INSERT INTO entry_tags(entry_id, tag) VALUES (?, ?)`)
 	if err != nil {
@@ -280,6 +300,11 @@ func insertSnapshot(ctx context.Context, tx *sql.Tx, snap *validate.Snapshot, ge
 		}
 		if _, err := ftsStmt.ExecContext(ctx, rowid, e.Title, e.Summary, tags, e.Body); err != nil {
 			return fmt.Errorf("index entry text %s: %w", e.ID, err)
+		}
+		if _, err := charsStmt.ExecContext(ctx, rowid,
+			charSplit(e.Title), charSplit(e.Summary), charSplit(tags), charSplit(e.Body),
+		); err != nil {
+			return fmt.Errorf("index entry chars %s: %w", e.ID, err)
 		}
 		for _, tag := range e.Tags {
 			if _, err := tagStmt.ExecContext(ctx, e.ID, tag); err != nil {
@@ -315,11 +340,34 @@ func insertSnapshot(ctx context.Context, tx *sql.Tx, snap *validate.Snapshot, ge
 type execQueryer interface {
 	ExecContext(ctx context.Context, query string, args ...any) (sql.Result, error)
 	QueryContext(ctx context.Context, query string, args ...any) (*sql.Rows, error)
+	QueryRowContext(ctx context.Context, query string, args ...any) *sql.Row
 }
 
-func checkIndex(ctx context.Context, q execQueryer) error {
+// charSplit inserts one space between every rune so unicode61 indexes each
+// CJK character as its own token and phrase queries become substring
+// matches.
+func charSplit(s string) string {
+	runes := []rune(s)
+	out := make([]rune, 0, len(runes)*2)
+	for i, r := range runes {
+		if i > 0 {
+			out = append(out, ' ')
+		}
+		out = append(out, r)
+	}
+	return string(out)
+}
+
+func checkIndex(ctx context.Context, q execQueryer, wantEntries int) error {
 	if _, err := q.ExecContext(ctx, `INSERT INTO entries_fts(entries_fts) VALUES('integrity-check')`); err != nil {
 		return fmt.Errorf("FTS integrity check failed: %w", err)
+	}
+	var charsCount int
+	if err := q.QueryRowContext(ctx, "SELECT count(*) FROM entries_fts_chars").Scan(&charsCount); err != nil {
+		return fmt.Errorf("FTS integrity check failed: %w", err)
+	}
+	if charsCount != wantEntries {
+		return fmt.Errorf("FTS integrity check failed: entries_fts_chars has %d rows, want %d", charsCount, wantEntries)
 	}
 	rows, err := q.QueryContext(ctx, "PRAGMA quick_check")
 	if err != nil {
