@@ -13,6 +13,8 @@ coverage.*
 .DS_Store
 Thumbs.db
 .mimosa/
+node_modules/
+package-lock.json
 
 # Local data repositories must never live inside the source tree.
 # Use a separate directory (default: ~/.memorytree).
