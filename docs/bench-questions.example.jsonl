@@ -1,0 +1,4 @@
+# One JSON object per line. expect_id is the gold entry the FIRST hit must be.
+# Copy this file next to your data repository and fill real ids via memory_search.
+{"id": 1, "query": "docker 端口", "expect_id": "019a2f4e-7c1a-7b3d-9e21-4f6a8c2d1b05", "limit": 5}
+{"id": 2, "query": "网络 峰值", "expect_id": "019a2f4e-7c1a-7b3d-9e21-4f6a8c2d1b06", "limit": 5}

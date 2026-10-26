@@ -4,6 +4,8 @@ The design document currently lives at the repository root:
 
 - [DESIGN.md](../DESIGN.md) — architecture, decisions, security, milestones
 - [M1 acceptance](m1-acceptance.md) — 20-question retrieval benchmark against MEMORY.md + grep, final rerun (2026-10-25)
+- [Performance baseline](perf-baseline.md) — index rebuild and search costs at 100/1000/5000 entries
+- [Bench questions format](bench-questions.example.jsonl) — retrieval regression gate for `memoryd bench`
 
 Documents planned before the first public release:
 

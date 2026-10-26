@@ -8,7 +8,9 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"strconv"
 
+	"github.com/li-ziyin/memorytree/internal/bench"
 	"github.com/li-ziyin/memorytree/internal/index"
 	"github.com/li-ziyin/memorytree/internal/initrepo"
 	"github.com/li-ziyin/memorytree/internal/legacy"
@@ -43,6 +45,8 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		return runIndex(args[1:], stdout, stderr)
 	case "mcp":
 		return runMCP(args[1:], stdin, stdout, stderr)
+	case "bench":
+		return runBench(args[1:], stdout, stderr)
 	case "version":
 		fmt.Fprintf(stdout, "memoryd %s (commit %s, built %s)\n", version, commit, date)
 		return 0
@@ -219,6 +223,63 @@ func runMCP(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	return 0
 }
 
+func runBench(args []string, stdout, stderr io.Writer) int {
+	fs := flag.NewFlagSet("bench", flag.ContinueOnError)
+	fs.SetOutput(stderr)
+	asJSON := fs.Bool("json", false, "emit machine-readable JSON")
+	if err := fs.Parse(args); err != nil {
+		if errors.Is(err, flag.ErrHelp) {
+			return 0
+		}
+		return 2
+	}
+	if fs.NArg() != 2 {
+		fmt.Fprintln(stderr, "usage: memoryd bench [--json] <data-dir> <questions.jsonl>")
+		return 2
+	}
+	questions, err := bench.LoadQuestions(fs.Arg(1))
+	if err != nil {
+		fmt.Fprintf(stderr, "memoryd: cannot load questions: %v\n", err)
+		return 2
+	}
+	results, err := bench.Run(fs.Arg(0), questions)
+	if err != nil {
+		fmt.Fprintf(stderr, "memoryd: bench failed: %v\n", err)
+		return 2
+	}
+	firstHit, totalTokens := 0, 0
+	for _, r := range results {
+		totalTokens += r.Tokens
+		if r.Rank == 1 {
+			firstHit++
+		}
+	}
+	if *asJSON {
+		enc := json.NewEncoder(stdout)
+		enc.SetIndent("", "  ")
+		if err := enc.Encode(map[string]any{
+			"results": results, "first_hit": firstHit,
+			"total": len(results), "tokens_estimated": totalTokens,
+		}); err != nil {
+			fmt.Fprintf(stderr, "memoryd: cannot write JSON: %v\n", err)
+			return 2
+		}
+	} else {
+		for _, r := range results {
+			rank := "miss"
+			if r.Rank > 0 {
+				rank = strconv.Itoa(r.Rank)
+			}
+			fmt.Fprintf(stdout, "%4d  rank %-4s hits %-3d tokens %-6d %s\n", r.ID, rank, r.Hits, r.Tokens, r.Query)
+		}
+		fmt.Fprintf(stdout, "\nfirst-hit %d/%d, total tokens %d\n", firstHit, len(results), totalTokens)
+	}
+	if firstHit != len(results) {
+		return 1
+	}
+	return 0
+}
+
 func runValidate(args []string, stdout, stderr io.Writer) int {
 	fs := flag.NewFlagSet("validate", flag.ContinueOnError)
 	fs.SetOutput(stderr)
@@ -272,6 +333,9 @@ Usage:
   memoryd index [--rebuild] [--json] <data-dir>
                                             build or refresh the search index
   memoryd mcp <data-dir>                    serve read-only MCP over stdio
+  memoryd bench [--json] <data-dir> <questions.jsonl>
+                                            rerun retrieval questions and
+                                            check first hits
   memoryd version                           print version information
   memoryd help                              show this help
 

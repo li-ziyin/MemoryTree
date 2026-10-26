@@ -12,6 +12,16 @@
 | 搜索 FTS `BenchmarkSearchFTS`（trigram，"docker backoff"） | — | 22.9 ms | — |
 | 搜索短词 `BenchmarkSearchShortCJK`（"端口 网关"，schema v1 走 LIKE 扫描） | — | 13.1 ms | — |
 
+## 真实仓检索回归基线
+
+问题集：`E:\MemoryTreeData\bench-questions.jsonl`（20 问，源自 [m1-acceptance.md](m1-acceptance.md) 逐题表；gold ID 已按 2026-10-26 索引核对）。
+
+| 日期 | 索引 schema | 首条命中 | 总 token |
+|---|---|---|---:|
+| 2026-10-26（Task 9 前，LIKE 回退） | v1 | 20/20 | 4,907 |
+
+`memoryd bench` 任一改动后复跑：首条命中不得低于 20/20，总 token 超过基线 +10% 需要说明理由。
+
 ## 结论（供 M2 决策）
 
 - 重建耗时约 1.2 s/千条，近线性；5000 条时单次重建约 6 s。在 1 万条以内，"每次源变更全量重建"仍可接受；超过 1 万条或写入频率上升后，M2 的增量索引才有必要。

@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"encoding/json"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -10,6 +11,7 @@ import (
 
 	"github.com/li-ziyin/memorytree/internal/index"
 	"github.com/li-ziyin/memorytree/internal/initrepo"
+	"github.com/li-ziyin/memorytree/internal/scalegen"
 )
 
 func TestRunMCPBuildsIndexAndServes(t *testing.T) {
@@ -104,5 +106,49 @@ func TestRunValidateAndIndexExitCodes(t *testing.T) {
 	}
 	if code := run([]string{"index", dir}, strings.NewReader(""), &stdout, &stderr); code != 1 {
 		t.Fatalf("corrupt index code = %d, want 1", code)
+	}
+}
+
+func TestRunBenchExitCodes(t *testing.T) {
+	dir := t.TempDir()
+	if err := scalegen.Generate(dir, 150); err != nil {
+		t.Fatal(err)
+	}
+	if code := run([]string{"index", dir}, strings.NewReader(""), io.Discard, &bytes.Buffer{}); code != 0 {
+		t.Fatalf("index code = %d", code)
+	}
+	ix, err := index.Open(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	hits, err := ix.Search(nil, index.SearchOptions{Query: "金丝雀 needle-0"})
+	if err != nil || len(hits) == 0 {
+		t.Fatalf("no gold entry: %v", err)
+	}
+	gold := hits[0].ID
+	if err := ix.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	good := filepath.Join(t.TempDir(), "q.jsonl")
+	goodLine := `{"id":1,"query":"金丝雀 needle-0","expect_id":"` + gold + `"}` + "\n"
+	if err := os.WriteFile(good, []byte(goodLine), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if code := run([]string{"bench", dir, good}, strings.NewReader(""), &bytes.Buffer{}, &bytes.Buffer{}); code != 0 {
+		t.Fatalf("bench good code = %d, want 0", code)
+	}
+
+	bad := filepath.Join(t.TempDir(), "q.jsonl")
+	badLine := `{"id":1,"query":"金丝雀 needle-0","expect_id":"019a2f4e-7c1a-7b3d-9e21-4f6a8c2d1b99"}` + "\n"
+	if err := os.WriteFile(bad, []byte(badLine), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if code := run([]string{"bench", dir, bad}, strings.NewReader(""), &bytes.Buffer{}, &bytes.Buffer{}); code != 1 {
+		t.Fatalf("bench bad code = %d, want 1", code)
+	}
+
+	if code := run([]string{"bench", dir}, strings.NewReader(""), &bytes.Buffer{}, &bytes.Buffer{}); code != 2 {
+		t.Fatalf("bench usage code = %d, want 2", code)
 	}
 }

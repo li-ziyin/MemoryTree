@@ -67,6 +67,9 @@ bash scripts/check.sh
 
 # Serve the read-only MCP server over stdio
 ./bin/memoryd mcp ~/.memorytree
+
+# Rerun retrieval questions and fail when a gold entry is not the first hit
+./bin/memoryd bench ~/.memorytree bench-questions.jsonl
 ```
 
 An MCP client only needs a command and arguments:
