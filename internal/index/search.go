@@ -105,10 +105,12 @@ func (ix *Index) Search(ctx context.Context, opts SearchOptions) ([]Hit, error) 
 		query = fmt.Sprintf(selectColumns, "entries e")
 		likeConditions, likeArgs := likeConditions(tokens)
 		conditions = append(conditions, likeConditions...)
+		rankExpr, rankArgs := likeRanking(tokens)
 		query += whereClause(conditions)
-		query += " ORDER BY e.updated_at DESC, e.id LIMIT ?"
+		query += " ORDER BY " + rankExpr + " DESC, e.updated_at DESC, e.id LIMIT ?"
 		args = append(args, filterArgs...)
 		args = append(args, likeArgs...)
+		args = append(args, rankArgs...)
 	}
 	args = append(args, opts.Limit)
 
@@ -221,6 +223,26 @@ func likeConditions(tokens []string) ([]string, []any) {
 		args = append(args, pattern, pattern, pattern)
 	}
 	return conditions, args
+}
+
+// likeRanking scores title matches twice as heavily as summary matches.
+// Body-only matches score zero, so a newer body-only entry cannot outrank a
+// title or summary match when the LIKE fallback has no BM25 ranking.
+func likeRanking(tokens []string) (string, []any) {
+	titleTerms := make([]string, len(tokens))
+	summaryTerms := make([]string, len(tokens))
+	args := make([]any, 0, len(tokens)*2)
+	for i, token := range tokens {
+		titleTerms[i] = `CASE WHEN e.title LIKE ? ESCAPE '\' THEN 1 ELSE 0 END`
+		args = append(args, likePattern(token))
+	}
+	for i, token := range tokens {
+		summaryTerms[i] = `CASE WHEN e.summary LIKE ? ESCAPE '\' THEN 1 ELSE 0 END`
+		args = append(args, likePattern(token))
+	}
+	score := "(" + strings.Join(titleTerms, " + ") + ") * 2 + (" +
+		strings.Join(summaryTerms, " + ") + ")"
+	return score, args
 }
 
 func likePattern(s string) string {

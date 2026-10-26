@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
@@ -231,6 +232,7 @@ func TestSearchFilters(t *testing.T) {
 		{name: "type user", opts: SearchOptions{Types: []string{"user"}}, want: 1},
 		{name: "type project", opts: SearchOptions{Types: []string{"project"}}, want: 1},
 		{name: "effective tag", opts: SearchOptions{Tags: []string{"work"}}, want: 1},
+		{name: "short query with tag", opts: SearchOptions{Query: "解码", Tags: []string{"work"}}, want: 1},
 		{name: "two effective tags", opts: SearchOptions{Tags: []string{"work", "sse"}}, want: 1},
 		{name: "missing tag", opts: SearchOptions{Tags: []string{"nope"}}, want: 0},
 		{name: "draft excluded by default", opts: SearchOptions{Statuses: []string{"draft"}}, want: 0},
@@ -386,6 +388,56 @@ func TestIncompatibleSchemaRequiresRebuild(t *testing.T) {
 	}
 	if hits := search(t, root, SearchOptions{Query: "SSE"}); len(hits) != 1 {
 		t.Errorf("rebuilt index is not searchable: %+v", hits)
+	}
+}
+
+func TestLikeFallbackRanksTitleThenSummaryThenBody(t *testing.T) {
+	root := exampleCopy(t)
+	write := func(filename, id, title, summary, body, date string) {
+		t.Helper()
+		content := fmt.Sprintf(`---
+schema: memorytree.entry/v1
+id: %s
+node: 019a2f4e-7c1a-7b3d-9e21-4f6a8c2d1b02
+type: user
+status: active
+sensitivity: private
+title: %s
+summary: %s
+tags_delta: []
+source:
+  agent: test
+  kind: manual
+supersedes: []
+superseded_by: null
+related: []
+created_at: "%sT00:00:00Z"
+updated_at: "%sT00:00:00Z"
+---
+
+%s
+`, id, title, summary, date, date, body)
+		if err := os.WriteFile(filepath.Join(root, "global", "memories", filename), []byte(content), 0o600); err != nil {
+			t.Fatalf("write %s: %v", filename, err)
+		}
+	}
+
+	write("2026-10-22-summary-note.md", "019a2f4e-7c1a-7b3d-9e21-4f6a8c2d1b07",
+		"summary-note", "与解码有关的摘要。", "正文不含关键词。", "2026-10-22")
+	write("2026-10-23-body-note.md", "019a2f4e-7c1a-7b3d-9e21-4f6a8c2d1b08",
+		"body-note", "一条普通记录。", "正文顺带提到解码一次。", "2026-10-23")
+
+	mustBuild(t, root, BuildOptions{})
+
+	hits := search(t, root, SearchOptions{Query: "解码"})
+	want := []string{sseEntryID, "019a2f4e-7c1a-7b3d-9e21-4f6a8c2d1b07", "019a2f4e-7c1a-7b3d-9e21-4f6a8c2d1b08"}
+	if len(hits) != len(want) {
+		t.Fatalf("query returned %d hits, want %d: %+v", len(hits), len(want), hits)
+	}
+	for i, id := range want {
+		if hits[i].ID != id {
+			t.Errorf("hit %d = %s, want %s", i, hits[i].ID, id)
+		}
 	}
 }
 
