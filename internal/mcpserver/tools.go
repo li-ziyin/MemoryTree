@@ -10,9 +10,11 @@ import (
 	"strings"
 	"unicode/utf8"
 
+	"github.com/li-ziyin/memorytree/internal/gitio"
 	"github.com/li-ziyin/memorytree/internal/ids"
 	"github.com/li-ziyin/memorytree/internal/index"
 	"github.com/li-ziyin/memorytree/internal/model"
+	"github.com/li-ziyin/memorytree/internal/store"
 )
 
 type toolDefinition struct {
@@ -140,6 +142,46 @@ func toolDefinitions() []toolDefinition {
 			}),
 			Annotations: readOnlyTool("Memory tree"),
 		},
+		{
+			Name: "memory_add",
+			Description: "Write one memory entry: validates, writes the file atomically, commits " +
+				"to git, and refreshes the index. Pass supersedes to take over from older entries. " +
+				"source.agent identifies the calling agent; keep summaries semantic, not truncated.",
+			InputSchema: objectSchema(map[string]any{
+				"type":        map[string]any{"type": "string", "enum": []string{"user", "feedback", "project", "reference"}, "description": "Entry type."},
+				"title":       map[string]any{"type": "string", "minLength": 1, "maxLength": 200, "description": "Short title."},
+				"summary":     map[string]any{"type": "string", "minLength": 1, "maxLength": 500, "description": "Semantic summary; retrieval returns it."},
+				"body":        map[string]any{"type": "string", "description": "Markdown body."},
+				"node":        map[string]any{"type": "string", "description": `Host node slug path (for example "work/agentflow") or UUIDv7. Defaults to global.`},
+				"tags_delta":  map[string]any{"type": "array", "items": map[string]any{"type": "string"}, "description": "Tags this entry adds (NFC, lowercase)."},
+				"sensitivity": map[string]any{"type": "string", "enum": []string{"public", "internal", "private"}, "description": "Defaults to the host node's level."},
+				"status":      map[string]any{"type": "string", "enum": []string{"active", "draft"}, "description": "Defaults to active."},
+				"supersedes":  map[string]any{"type": "array", "items": map[string]any{"type": "string", "pattern": ids.UUIDv7Pattern}, "description": "Entry IDs this one replaces; they become superseded."},
+				"related":     map[string]any{"type": "array", "items": map[string]any{"type": "string", "pattern": ids.UUIDv7Pattern}, "description": "Related entry IDs."},
+				"source": map[string]any{
+					"type": "object",
+					"properties": map[string]any{
+						"agent":   map[string]any{"type": "string", "description": "Calling agent name, required."},
+						"kind":    map[string]any{"type": "string", "enum": []string{"conversation", "document", "manual", "import"}, "description": "Capture kind, required."},
+						"session": map[string]any{"type": "string", "description": "Session identifier if any."},
+						"ref":     map[string]any{"type": "string", "description": "Repository-relative reference, not an absolute path."},
+					},
+					"required": []string{"agent", "kind"},
+				},
+			}, "type", "title", "summary", "body", "source"),
+			Annotations: writeTool("Memory add"),
+		},
+		{
+			Name: "memory_supersede",
+			Description: "Link an existing supersede pair: the old entry becomes superseded, the " +
+				"new one inherits its whole predecessor set. Use memory_add with supersedes instead " +
+				"when writing the replacement.",
+			InputSchema: objectSchema(map[string]any{
+				"old_id": map[string]any{"type": "string", "pattern": ids.UUIDv7Pattern, "description": "Entry that becomes superseded."},
+				"by_id":  map[string]any{"type": "string", "pattern": ids.UUIDv7Pattern, "description": "Active entry that takes over."},
+			}, "old_id", "by_id"),
+			Annotations: writeTool("Memory supersede"),
+		},
 	}
 }
 
@@ -149,6 +191,16 @@ func readOnlyTool(title string) *toolAnnotations {
 		ReadOnlyHint:    true,
 		DestructiveHint: false,
 		IdempotentHint:  true,
+		OpenWorldHint:   false,
+	}
+}
+
+func writeTool(title string) *toolAnnotations {
+	return &toolAnnotations{
+		Title:           title,
+		ReadOnlyHint:    false,
+		DestructiveHint: false,
+		IdempotentHint:  false,
 		OpenWorldHint:   false,
 	}
 }
@@ -795,4 +847,82 @@ func indexFailure(err error) *ToolError {
 		Message:    fmt.Sprintf("cannot read the search index: %v", err),
 		Suggestion: "Run memoryd index --rebuild <data-dir> if the problem persists.",
 	}
+}
+
+func (s *Server) memoryAdd(ctx context.Context, raw json.RawMessage) (*Envelope, *ToolError) {
+	if s.root == "" {
+		return nil, &ToolError{
+			Code:       "WRITE_UNAVAILABLE",
+			Message:    "this server was started without its data directory",
+			Suggestion: "Restart memoryd mcp with the data directory argument.",
+		}
+	}
+	var in store.EntryInput
+	if err := json.Unmarshal(raw, &in); err != nil {
+		return nil, invalidArgs("invalid memory_add arguments", err.Error())
+	}
+	res, err := store.AddEntry(s.root, in)
+	if err != nil {
+		return nil, storeToolError(err, "memory_add")
+	}
+	s.afterWrite()
+	return s.envelope(res, 1), nil
+}
+
+func (s *Server) memorySupersede(ctx context.Context, raw json.RawMessage) (*Envelope, *ToolError) {
+	if s.root == "" {
+		return nil, &ToolError{
+			Code:       "WRITE_UNAVAILABLE",
+			Message:    "this server was started without its data directory",
+			Suggestion: "Restart memoryd mcp with the data directory argument.",
+		}
+	}
+	var args struct {
+		OldID string `json:"old_id"`
+		ByID  string `json:"by_id"`
+	}
+	if err := json.Unmarshal(raw, &args); err != nil {
+		return nil, invalidArgs("invalid memory_supersede arguments", err.Error())
+	}
+	if !ids.IsUUIDv7(args.OldID) || !ids.IsUUIDv7(args.ByID) {
+		return nil, invalidArgs("old_id and by_id must be UUIDv7", "Use memory_search to find current entry IDs.")
+	}
+	res, err := store.SupersedeEntry(s.root, args.OldID, args.ByID)
+	if err != nil {
+		return nil, storeToolError(err, "memory_supersede")
+	}
+	s.afterWrite()
+	return s.envelope(res, 1), nil
+}
+
+// afterWrite re-reads index metadata after a successful write so envelopes
+// report the new generation and the staleness check does not fire against
+// the write it just observed.
+func (s *Server) afterWrite() {
+	if meta, err := s.index.Meta(); err == nil {
+		s.generation = meta.Generation
+		s.fingerprint = meta.Fingerprint
+		s.staleWarned = false
+	}
+}
+
+// storeToolError maps write-gateway failures onto stable tool codes.
+func storeToolError(err error, tool string) *ToolError {
+	var ie *store.InputError
+	if errors.As(err, &ie) {
+		return &ToolError{
+			Code:       ie.Code,
+			Message:    ie.Message,
+			Suggestion: "Fix the input and retry " + tool + ".",
+		}
+	}
+	switch {
+	case errors.Is(err, store.ErrWriteLocked):
+		return &ToolError{Code: "WRITE_LOCKED", Message: "another write is in progress", Suggestion: "Retry shortly."}
+	case errors.Is(err, store.ErrInvalidRepository):
+		return &ToolError{Code: "INVALID_REPOSITORY", Message: err.Error(), Suggestion: "Run memoryd validate and fix the repository before writing."}
+	case errors.Is(err, gitio.ErrGitMissing), errors.Is(err, gitio.ErrNotRepository):
+		return &ToolError{Code: "GIT_UNAVAILABLE", Message: err.Error(), Suggestion: "Writes need git on PATH and a git work tree."}
+	}
+	return &ToolError{Code: "WRITE_FAILED", Message: err.Error()}
 }

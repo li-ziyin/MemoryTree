@@ -164,11 +164,16 @@ func TestInitializeAndToolsList(t *testing.T) {
 
 	listResult := mustMap(t, responses[1]["result"], "tools/list result")
 	tools := mustSlice(t, listResult["tools"], "tools")
-	if len(tools) != 4 {
-		t.Fatalf("got %d tools, want 4", len(tools))
+	if len(tools) != 6 {
+		t.Fatalf("got %d tools, want 6", len(tools))
 	}
 	want := map[string]bool{
 		"memory_brief": false, "memory_search": false, "memory_get": false, "memory_tree": false,
+		"memory_add": false, "memory_supersede": false,
+	}
+	readOnly := map[string]bool{
+		"memory_brief": true, "memory_search": true, "memory_get": true, "memory_tree": true,
+		"memory_add": false, "memory_supersede": false,
 	}
 	for _, raw := range tools {
 		tool := mustMap(t, raw, "tool")
@@ -183,8 +188,8 @@ func TestInitializeAndToolsList(t *testing.T) {
 			t.Errorf("%s inputSchema = %+v", name, schema)
 		}
 		annotations := mustMap(t, tool["annotations"], "annotations")
-		if annotations["readOnlyHint"] != true || annotations["openWorldHint"] != false {
-			t.Errorf("%s annotations = %+v", name, annotations)
+		if annotations["readOnlyHint"] != readOnly[name] || annotations["openWorldHint"] != false {
+			t.Errorf("%s annotations = %+v", annotations, schema)
 		}
 	}
 	for name, found := range want {
