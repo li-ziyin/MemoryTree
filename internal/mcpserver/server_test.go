@@ -4,11 +4,13 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"unicode/utf8"
 
 	"github.com/li-ziyin/memorytree/internal/index"
 )
@@ -20,10 +22,17 @@ const (
 )
 
 func newTestServer(t *testing.T) *Server {
+	return newTestServerWith(t, nil)
+}
+
+func newTestServerWith(t *testing.T, setup func(root string)) *Server {
 	t.Helper()
 	root := t.TempDir()
 	if err := os.CopyFS(root, os.DirFS(filepath.Join("..", "..", "spec", "examples"))); err != nil {
 		t.Fatalf("copy example: %v", err)
+	}
+	if setup != nil {
+		setup(root)
 	}
 	if _, err := index.Build(root, index.BuildOptions{}); err != nil {
 		t.Fatalf("build index: %v", err)
@@ -274,6 +283,107 @@ func TestMemoryGetTool(t *testing.T) {
 		t.Fatalf("invalid ID did not fail")
 	}
 	if terr := toolError(t, invalid); terr.Code != "INVALID_ARGUMENTS" {
+		t.Errorf("error code = %s", terr.Code)
+	}
+}
+
+func TestMemoryGetExcerpt(t *testing.T) {
+	const longID = "019a2f4e-7c1a-7b3d-9e21-4f6a8c2d1b09"
+	marker := "紫色风铃"
+	longBody := strings.Repeat("这是填充内容，不含关键词。", 80) + "\n\n" +
+		marker + "只在中间出现一次。\n\n" + strings.Repeat("尾部填充内容。", 80)
+
+	srv := newTestServerWith(t, func(root string) {
+		content := fmt.Sprintf(`---
+schema: memorytree.entry/v1
+id: %s
+node: 019a2f4e-7c1a-7b3d-9e21-4f6a8c2d1b02
+type: user
+status: active
+sensitivity: private
+title: long-note
+summary: 测试用长条目。
+tags_delta: []
+source:
+  agent: test
+  kind: manual
+supersedes: []
+superseded_by: null
+related: []
+created_at: "2026-10-21T00:00:00Z"
+updated_at: "2026-10-21T00:00:00Z"
+---
+
+%s
+`, longID, longBody)
+		path := filepath.Join(root, "global", "memories", "2026-10-21-long-note.md")
+		if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
+			t.Fatalf("write long entry: %v", err)
+		}
+	})
+
+	result := callTool(t, srv, "memory_get", map[string]any{
+		"id":        longID,
+		"query":     marker,
+		"max_chars": 300,
+	})
+	if result["isError"] == true {
+		t.Fatalf("memory_get excerpt failed: %+v", toolError(t, result))
+	}
+	env := mustMap(t, result["structuredContent"], "structuredContent")
+	entry := mustMap(t, env["data"], "entry")
+	body := entry["body"].(string)
+	if !strings.Contains(body, marker) {
+		t.Errorf("excerpt misses the marker: %q", body)
+	}
+	if entry["excerpted"] != true {
+		t.Errorf("excerpted = %v, want true", entry["excerpted"])
+	}
+	if full := entry["full_chars"].(float64); full <= 300 {
+		t.Errorf("full_chars = %v, want > 300", full)
+	}
+	if n := utf8.RuneCountInString(body); n > 300 {
+		t.Errorf("excerpt is %d runes, want <= 300", n)
+	}
+	if !warningsContain(mustSlice(t, mustMap(t, env["meta"], "meta")["warnings"], "warnings"), "excerpt") {
+		t.Errorf("missing excerpt warning")
+	}
+
+	full := callTool(t, srv, "memory_get", map[string]any{"id": longID})
+	fullEntry := mustMap(t, mustMap(t, full["structuredContent"], "structuredContent")["data"], "entry")
+	if body := fullEntry["body"].(string); !strings.Contains(body, marker) || utf8.RuneCountInString(body) <= 300 {
+		t.Errorf("full body was not returned")
+	}
+	if _, ok := fullEntry["excerpted"]; ok {
+		t.Errorf("full get should not be marked excerpted")
+	}
+
+	fallback := callTool(t, srv, "memory_get", map[string]any{
+		"id":        longID,
+		"query":     "不存在的词",
+		"max_chars": 300,
+	})
+	if fallback["isError"] == true {
+		t.Fatalf("memory_get fallback failed: %+v", toolError(t, fallback))
+	}
+	fallbackEnv := mustMap(t, fallback["structuredContent"], "structuredContent")
+	fallbackEntry := mustMap(t, fallbackEnv["data"], "entry")
+	if strings.Contains(fallbackEntry["body"].(string), marker) {
+		t.Errorf("fallback excerpt should come from the beginning")
+	}
+	if !warningsContain(mustSlice(t, mustMap(t, fallbackEnv["meta"], "meta")["warnings"], "warnings"), "not found") {
+		t.Errorf("missing query-not-found warning")
+	}
+
+	bad := callTool(t, srv, "memory_get", map[string]any{
+		"id":        longID,
+		"query":     marker,
+		"max_chars": 10,
+	})
+	if bad["isError"] != true {
+		t.Fatalf("short max_chars did not fail")
+	}
+	if terr := toolError(t, bad); terr.Code != "INVALID_ARGUMENTS" {
 		t.Errorf("error code = %s", terr.Code)
 	}
 }
