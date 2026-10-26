@@ -21,11 +21,11 @@ const (
 	unknownID   = "019a2f4e-7c1a-7b3d-9e21-4f6a8c2d1bff"
 )
 
-func newTestServer(t *testing.T) *Server {
+func newTestServer(t testing.TB) *Server {
 	return newTestServerWith(t, nil)
 }
 
-func newTestServerWith(t *testing.T, setup func(root string)) *Server {
+func newTestServerWith(t testing.TB, setup func(root string)) *Server {
 	t.Helper()
 	root := t.TempDir()
 	if err := os.CopyFS(root, os.DirFS(filepath.Join("..", "..", "spec", "examples"))); err != nil {
