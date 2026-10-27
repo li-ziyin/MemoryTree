@@ -9,9 +9,12 @@ import (
 
 func TestAppendStoresCaptureWithHeader(t *testing.T) {
 	root := t.TempDir()
-	path, err := Append(root, "zcode", []byte("用户偏好先定方案再动手。"))
+	path, redactions, err := Append(root, "zcode", []byte("用户偏好先定方案再动手。"))
 	if err != nil {
 		t.Fatal(err)
+	}
+	if redactions != 0 {
+		t.Errorf("redactions = %d on clean text, want 0", redactions)
 	}
 	if filepath.Dir(path) != filepath.Join(root, DirName) {
 		t.Fatalf("path = %s", path)
@@ -36,7 +39,7 @@ func TestAppendNamesNeverCollide(t *testing.T) {
 	root := t.TempDir()
 	seen := map[string]bool{}
 	for i := 0; i < 20; i++ {
-		path, err := Append(root, "zcode", []byte("x"))
+		path, _, err := Append(root, "zcode", []byte("x"))
 		if err != nil {
 			t.Fatal(err)
 		}

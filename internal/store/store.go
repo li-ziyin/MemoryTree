@@ -16,6 +16,7 @@ import (
 	"github.com/li-ziyin/memorytree/internal/ids"
 	"github.com/li-ziyin/memorytree/internal/index"
 	"github.com/li-ziyin/memorytree/internal/model"
+	"github.com/li-ziyin/memorytree/internal/redact"
 	"github.com/li-ziyin/memorytree/internal/validate"
 )
 
@@ -71,6 +72,9 @@ type AddResult struct {
 	Generation int64 `json:"generation"`
 	// Committed reports whether a git commit was created.
 	Committed bool `json:"committed"`
+	// Redactions counts credentials replaced with [REDACTED] before the
+	// write; the originals never reach disk.
+	Redactions int `json:"redactions"`
 }
 
 // now is overridable in tests.
@@ -115,6 +119,20 @@ func AddEntry(dataDir string, in EntryInput) (*AddResult, error) {
 		return nil, err
 	}
 
+	// Secrets never reach disk: scan before any validation or write, and
+	// report only the count.
+	var n int
+	redactions := 0
+	if in.Title, n = redact.Scan(in.Title); n > 0 {
+		redactions += n
+	}
+	if in.Summary, n = redact.Scan(in.Summary); n > 0 {
+		redactions += n
+	}
+	if in.Body, n = redact.Scan(in.Body); n > 0 {
+		redactions += n
+	}
+
 	node := resolveNode(snap, in.Node)
 	if node == nil {
 		return nil, inputf("V-NODE-1", "node %q does not exist", in.Node)
@@ -155,7 +173,7 @@ func AddEntry(dataDir string, in EntryInput) (*AddResult, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &AddResult{ID: entry.ID, Path: path, Generation: gen, Committed: true}, nil
+	return &AddResult{ID: entry.ID, Path: path, Generation: gen, Committed: true, Redactions: redactions}, nil
 }
 
 // finishWrite validates the freshly written tree, rebuilds the index, and

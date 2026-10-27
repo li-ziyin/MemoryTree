@@ -233,6 +233,39 @@ func TestAddEntryCleansCrashTempFiles(t *testing.T) {
 	}
 }
 
+// Secrets never reach disk: the write path redacts before validating and
+// writing, and reports the count.
+func TestAddEntryRedactsSecrets(t *testing.T) {
+	root := newRepo(t)
+	token := "ghp_" + strings.Repeat("a9", 18)
+	in := validInput()
+	in.Body = "deploy token was " + token + " rotate soon\n"
+	res, err := AddEntry(root, in)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Redactions != 1 {
+		t.Fatalf("redactions = %d, want 1", res.Redactions)
+	}
+	data, err := os.ReadFile(res.Path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(data), token) {
+		t.Fatalf("secret reached disk: %s", data)
+	}
+	if !strings.Contains(string(data), "[REDACTED]") {
+		t.Fatalf("no [REDACTED] marker: %s", data)
+	}
+	// The redacted tree still validates and commits.
+	if out, err := exec.Command("git", "-C", root, "status", "--porcelain").CombinedOutput(); err != nil || strings.TrimSpace(string(out)) != "" {
+		t.Errorf("git status not clean: %v: %s", err, out)
+	}
+	if _, err := index.Build(root, index.BuildOptions{}); err != nil {
+		t.Errorf("repository invalid after redaction: %v", err)
+	}
+}
+
 func indexOpen(t *testing.T, root string) *index.Index {
 	t.Helper()
 	if _, err := index.Build(root, index.BuildOptions{}); err != nil {

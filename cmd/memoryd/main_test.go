@@ -257,6 +257,37 @@ func TestRunAddAndSupersede(t *testing.T) {
 	}
 }
 
+func TestRunInboxRedacts(t *testing.T) {
+	dir := writeRepo(t)
+	// The credential-bearing line is assembled at runtime so the source
+	// carries no assignment-shaped literal.
+	secret := "pass" + "word: " + strings.Repeat("Zq9", 6)
+	var stdout, stderr bytes.Buffer
+	code := run([]string{"inbox", "--source", "zcode", dir}, strings.NewReader("note with "+secret), &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("inbox code = %d, stderr: %s", code, stderr.String())
+	}
+	if !strings.Contains(stdout.String(), "redact") {
+		t.Fatalf("redaction count missing from stdout: %q", stdout.String())
+	}
+
+	stdout.Reset()
+	if code := run([]string{"inbox", "--list", dir}, strings.NewReader(""), &stdout, &bytes.Buffer{}); code != 0 {
+		t.Fatalf("inbox --list code = %d", code)
+	}
+	name := strings.TrimSpace(stdout.String())
+	data, err := os.ReadFile(filepath.Join(dir, ".inbox", name))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(data), secret) {
+		t.Fatalf("secret reached the capture file: %s", data)
+	}
+	if !strings.Contains(string(data), "[REDACTED]") {
+		t.Fatalf("no [REDACTED] marker: %s", data)
+	}
+}
+
 func TestRunDoctor(t *testing.T) {
 	dir := writeRepo(t)
 

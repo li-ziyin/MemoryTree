@@ -498,10 +498,13 @@ func runInbox(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		fmt.Fprintln(stderr, "memoryd: refusing to store an empty capture")
 		return 2
 	}
-	path, err := inbox.Append(dir, *source, data)
+	path, redactions, err := inbox.Append(dir, *source, data)
 	if err != nil {
 		fmt.Fprintf(stderr, "memoryd: inbox failed: %v\n", err)
-		return 1
+		return 2
+	}
+	if redactions > 0 {
+		fmt.Fprintf(stdout, "redacted %d credential(s) before storing\n", redactions)
 	}
 	fmt.Fprintf(stdout, "stored %s\n", path)
 	return 0
