@@ -13,6 +13,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode"
 
 	"github.com/li-ziyin/memorytree/internal/bench"
 	"github.com/li-ziyin/memorytree/internal/capture"
@@ -576,6 +577,7 @@ func runCaptureSession(args []string, stdin io.Reader, stdout, stderr io.Writer)
 	in.Cwd = firstNonEmpty(*cwd, hook.Cwd)
 	in.Event = firstNonEmpty(*event, hook.Event)
 	in.TranscriptPath = firstNonEmpty(*transcript, hook.Transcript)
+	in.RolloutPath = zcodeRolloutPath(in.Source, in.Session)
 
 	content := capture.Build(in, time.Now().UTC())
 	if len(content) == 0 {
@@ -601,6 +603,27 @@ func firstNonEmpty(values ...string) string {
 		}
 	}
 	return ""
+}
+
+// zcodeRolloutPath resolves ZCode's durable per-session rollout log for a
+// capture that came from ZCode with a session id. The id is restricted to
+// the character set real ids use, so a hostile value cannot traverse paths.
+// An empty result means no rollout lookup is possible.
+func zcodeRolloutPath(source, session string) string {
+	if source != "zcode" || session == "" {
+		return ""
+	}
+	for _, r := range session {
+		if !unicode.IsLetter(r) && !unicode.IsDigit(r) && r != '_' && r != '-' {
+			return ""
+		}
+	}
+	home, err := os.UserHomeDir()
+	if err != nil || home == "" {
+		return ""
+	}
+	// Real ids look like session_<hex>; the log is model-io-<id>.jsonl.
+	return filepath.Join(home, ".zcode", "cli", "rollout", "model-io-"+session+".jsonl")
 }
 
 func runGardener(args []string, stdin io.Reader, stdout, stderr io.Writer) int {

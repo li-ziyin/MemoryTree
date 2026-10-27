@@ -324,7 +324,7 @@ V1 只生成提案与 dry-run，真实应用由人显式触发；不自动合并
 4. **gardener 使用信号** —— 统计每条目的返回次数（`search`/`brief` 命中），在 gardener 数据包中暴露最后使用/从未使用统计，使冷条目可被提议废弃。*验收：*`gardener data` 含使用统计；从未返回且数月未更新的条目可被提案标记；计数只存派生数据，不进记忆文件。
 5. **写入自动重试** —— 写工具遇锁竞争时有界重试（一次）而非立即失败。*验收：*两个并发写方都成功、无需调用方重试；锁被永久持有仍以可重试错误码失败。
 
-完成（2026-10-27，见 [docs/m4-acceptance.md](docs/m4-acceptance.md)）：五项全部落地。`memoryd capture-session` + `install --hooks`（ZCode `Stop` 进程钩子、OpenCode `session.idle` 插件）会话结束自动落一条脱敏 inbox 采集，含从 transcript 提取的摘要；状态脱敏覆盖 home 锚定路径、`HOME`/`USERPROFILE` 赋值、标签字段中的无点主机名与无点 `user@host`，误伤策略（仓库相对引用、URL、邮箱、带点主机名保持原样）成文并有钉死测试；`memoryd sync` 在写锁下 fetch + rebase + push，双克隆收敛、脏树与未完成 rebase 拒绝、冲突以普通 git 冲突呈现；`entry_usage` 与第七个 gardener 原语 `deprecate_entry` 闭合冷条目环（Plan 同时修正为遵守文档承诺的「有 blocked 则 Steps 为空」）；写入重试实现为一个约 20 秒的有界竞争窗口、100ms 重试——字面的「重试一次」在三方以上竞争下会丢写者（测试实测），已按实测语义收口。
+完成（2026-10-27，见 [docs/m4-acceptance.md](docs/m4-acceptance.md)）：五项全部落地。`memoryd capture-session` + `install --hooks`（ZCode `Stop` 进程钩子、OpenCode `session.idle` 插件）会话结束自动落一条脱敏 inbox 采集，含从 transcript 提取的摘要；状态脱敏覆盖 home 锚定路径、`HOME`/`USERPROFILE` 赋值、标签字段中的无点主机名与无点 `user@host`，误伤策略（仓库相对引用、URL、邮箱、带点主机名保持原样）成文并有钉死测试；`memoryd sync` 在写锁下 fetch + rebase + push，双克隆收敛、脏树与未完成 rebase 拒绝、冲突以普通 git 冲突呈现；`entry_usage` 与第七个 gardener 原语 `deprecate_entry` 闭合冷条目环（Plan 同时修正为遵守文档承诺的「有 blocked 则 Steps 为空」）；写入重试实现为一个约 20 秒的有界竞争窗口、100ms 重试——字面的「重试一次」在三方以上竞争下会丢写者（测试实测），已按实测语义收口。同晚完成生产验证：真实 ZCode 会话落下了脱敏采集、(source, session) 覆盖在现场得到实证；因钩子载荷的临时 transcript 缺会话首个用户请求，`capture-session` 增加对 ZCode 持久 rollout 日志（`~/.zcode/cli/rollout/model-io-<session>.jsonl`）的回退提取（首任务 + 末结论，跳过客户端注入的 `<system-reminder>` 上下文）。
 
 M4 明确仍不做（维持既定延后）：语义检索（V2，等证据）、增量索引（约 1 万条以上才需要）、内嵌 go-git、`.archive/` 静态加密、首个 tagged release 前的模块路径更换。
 

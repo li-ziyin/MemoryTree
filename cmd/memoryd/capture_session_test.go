@@ -84,6 +84,66 @@ func TestRunCaptureSessionUsage(t *testing.T) {
 	}
 }
 
+// A zcode capture without a usable transcript still gets its task from the
+// durable rollout log, resolved by session id under the real home directory.
+func TestRunCaptureSessionZCodeRolloutFallback(t *testing.T) {
+	home := t.TempDir()
+	for _, v := range []string{"USERPROFILE", "HOME"} {
+		t.Setenv(v, home)
+	}
+	rolloutDir := filepath.Join(home, ".zcode", "cli", "rollout")
+	if err := os.MkdirAll(rolloutDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	body := `{"request":{"body":{"messages":[{"role":"user","content":[{"type":"text","text":"<system-reminder>ctx</system-reminder>"},{"type":"text","text":"接着推进捕获功能"}]}]}},"response":{"text":""}}
+{"request":{},"response":{"text":"rollout 回退已实现并验证。"}}
+`
+	// Real ids carry the session_ prefix, so the log is model-io-<id>.jsonl.
+	if err := os.WriteFile(filepath.Join(rolloutDir, "model-io-session_9.jsonl"), []byte(body), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	payload := `{"session_id":"session_9","cwd":"E:\\MemoryTree","hook_event_name":"Stop"}`
+
+	data := t.TempDir()
+	var stdout, stderr bytes.Buffer
+	code := run([]string{"capture-session", "--source", "zcode", data}, strings.NewReader(payload), &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("code = %d, stderr: %s", code, stderr.String())
+	}
+	names, err := filepath.Glob(filepath.Join(data, ".inbox", "*.md"))
+	if err != nil || len(names) != 1 {
+		t.Fatalf("inbox captures = %d (err %v)", len(names), err)
+	}
+	raw, _ := os.ReadFile(names[0])
+	for _, want := range []string{"session: session_9", "接着推进捕获功能", "rollout 回退已实现并验证。"} {
+		if !strings.Contains(string(raw), want) {
+			t.Errorf("capture missing %q:\n%s", want, raw)
+		}
+	}
+	if strings.Contains(string(raw), "<system-reminder>") {
+		t.Errorf("injected context leaked:\n%s", raw)
+	}
+}
+
+func TestZCodeRolloutPathGuards(t *testing.T) {
+	for _, v := range []string{"USERPROFILE", "HOME"} {
+		t.Setenv(v, t.TempDir())
+	}
+	if got := zcodeRolloutPath("opencode", "session_1"); got != "" {
+		t.Errorf("non-zcode source should skip the rollout, got %q", got)
+	}
+	if got := zcodeRolloutPath("zcode", ""); got != "" {
+		t.Errorf("empty session should skip the rollout, got %q", got)
+	}
+	if got := zcodeRolloutPath("zcode", `../evil`); got != "" {
+		t.Errorf("path-traversal session should be rejected, got %q", got)
+	}
+	wantSuffix := filepath.Join(".zcode", "cli", "rollout", "model-io-session_1.jsonl")
+	if got := zcodeRolloutPath("zcode", "session_1"); !strings.HasSuffix(got, wantSuffix) {
+		t.Errorf("rollout path = %q, want suffix %q", got, wantSuffix)
+	}
+}
+
 func quoteJSON(s string) string {
 	var b bytes.Buffer
 	b.WriteByte('"')

@@ -29,11 +29,27 @@ type Input struct {
 	Cwd            string
 	Event          string
 	TranscriptPath string
+	// RolloutPath is ZCode's durable per-session model-io log; when the
+	// client's own transcript path is missing or yields nothing, it still
+	// carries the first user request and the last assistant outcome.
+	RolloutPath string
 }
+
+// noTranscript is emitted for a part the available sources could not provide.
+const noTranscript = "(no transcript available)"
 
 // Build renders the capture markdown.
 func Build(in Input, now time.Time) []byte {
 	task, outcome := extractTranscript(in.TranscriptPath)
+	if in.RolloutPath != "" {
+		rolloutTask, rolloutOutcome := extractZCodeRollout(in.RolloutPath)
+		if task == noTranscript {
+			task = rolloutTask
+		}
+		if outcome == noTranscript {
+			outcome = rolloutOutcome
+		}
+	}
 	var b strings.Builder
 	fmt.Fprintf(&b, "# Session capture (%s)\n\n", orUnknown(in.Source))
 	fmt.Fprintf(&b, "- ended: %s\n", now.UTC().Format(time.RFC3339))
@@ -53,7 +69,7 @@ func Build(in Input, now time.Time) []byte {
 // unreadable transcripts degrade to placeholders, never an error — a
 // metadata-only capture is still a valid signal.
 func extractTranscript(path string) (task, outcome string) {
-	task, outcome = "(no transcript available)", "(no transcript available)"
+	task, outcome = noTranscript, noTranscript
 	if path == "" {
 		return task, outcome
 	}
@@ -119,15 +135,80 @@ func extractTranscript(path string) (task, outcome string) {
 	return task, outcome
 }
 
+// extractZCodeRollout pulls the same pair out of ZCode's model-io rollout
+// log: one JSON object per line, each holding a full model request under
+// request.body.messages (only some lines carry it) and the model reply under
+// response.text. Client-injected context parts (<system-reminder>) and
+// tool-result echoes are skipped; unreadable files degrade to placeholders.
+func extractZCodeRollout(path string) (task, outcome string) {
+	task, outcome = noTranscript, noTranscript
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		return task, outcome
+	}
+	head, tail := splitHeadTail(raw, maxTranscriptBytes)
+
+	var firstUser, lastAssistant string
+	scan := func(chunk []byte) {
+		for _, line := range strings.Split(string(chunk), "\n") {
+			line = strings.TrimSpace(line)
+			if line == "" {
+				continue
+			}
+			var env struct {
+				Request *struct {
+					Body *struct {
+						Messages []struct {
+							Role    string          `json:"role"`
+							Content json.RawMessage `json:"content"`
+						} `json:"messages"`
+					} `json:"body"`
+				} `json:"request"`
+				Response *struct {
+					Text string `json:"text"`
+				} `json:"response"`
+			}
+			if json.Unmarshal([]byte(line), &env) != nil {
+				continue
+			}
+			if env.Request != nil && env.Request.Body != nil {
+				for _, m := range env.Request.Body.Messages {
+					if m.Role == "user" && firstUser == "" {
+						firstUser = contentText(m.Content)
+					}
+				}
+			}
+			if env.Response != nil && strings.TrimSpace(env.Response.Text) != "" {
+				lastAssistant = strings.TrimSpace(env.Response.Text)
+			}
+		}
+	}
+	scan(head)
+	scan(tail)
+	if firstUser != "" {
+		task = truncateRunes(firstUser, maxPartChars)
+	}
+	if lastAssistant != "" {
+		outcome = truncateRunes(lastAssistant, maxPartChars)
+	}
+	return task, outcome
+}
+
 // contentText decodes a message content field that is either a plain string
-// or an array of parts with type/text.
+// or an array of parts with type/text. Client-injected context wrapped in
+// <system-reminder> tags is never the user's own words, so such parts (and a
+// whole-message reminder) are dropped.
 func contentText(raw json.RawMessage) string {
 	if len(raw) == 0 {
 		return ""
 	}
 	var s string
 	if json.Unmarshal(raw, &s) == nil {
-		return strings.TrimSpace(s)
+		s = strings.TrimSpace(s)
+		if isSystemReminder(s) {
+			return ""
+		}
+		return s
 	}
 	var parts []struct {
 		Type string `json:"type"`
@@ -138,12 +219,18 @@ func contentText(raw json.RawMessage) string {
 	}
 	var b strings.Builder
 	for _, p := range parts {
-		if p.Text != "" && p.Type != "tool_use" && p.Type != "tool_result" {
+		if p.Text != "" && p.Type != "tool_use" && p.Type != "tool_result" && !isSystemReminder(p.Text) {
 			b.WriteString(p.Text)
 			b.WriteString("\n")
 		}
 	}
 	return strings.TrimSpace(b.String())
+}
+
+// isSystemReminder reports whether a text part is client-injected context
+// rather than human input.
+func isSystemReminder(s string) bool {
+	return strings.HasPrefix(strings.TrimSpace(s), "<system-reminder>")
 }
 
 // splitHeadTail keeps the first and last n/2 bytes of raw when it exceeds

@@ -39,6 +39,14 @@
 
 ## 遗留
 
-- 捕获 hooks 的**真实触发**验证：ZCode 侧已安装，待下一次会话自然结束确认落盘；OpenCode 插件在 `session.idle` 载荷字段上仅做了宽松兼容（`sessionID`/`session` 两名都取），首次真实触发后如有字段偏差再补。Qoder/WorkBuddy/DeepSeek 无已验证机制，维持手工路径。
+- ~~捕获 hooks 的**真实触发**验证~~ ZCode 侧已验证（见下节「生产验证补记」）；OpenCode 插件在 `session.idle` 载荷字段上仅做了宽松兼容（`sessionID`/`session` 两名都取），首次真实触发后如有字段偏差再补。Qoder/WorkBuddy/DeepSeek 无已验证机制，维持手工路径。
 - 数据仓尚未配置 git remote；`memoryd sync` 首次使用前需 `git -C E:\MemoryTreeData push -u <remote> HEAD` 设好上游。
 - 冷条目闭环的真实提案：`entry_usage` 日志刚启用，需积累一段使用数据后由 gardener 出首个 `deprecate_entry` 提案。
+
+## 生产验证补记（2026-10-27 晚）
+
+钩子装好后的第一批真实会话给出了生产证据，也暴露并催生了一个修复：
+
+- **真实触发确认**：`.inbox/` 落有两份真实采集——M4 收尾会话（`session_0e0f…`）与一个无关聊天会话（`session_9d50…`）。脱敏、inbox 格式、`(source, session)` 覆盖全部按设计工作：`session_9d50` 的采集文件名时间戳（14:49:56）早于内容时间（14:55:10），证明同一会话多轮 Stop 只留一份最新内容。M4 记录中「本会话启动早于钩子安装不会触发」的担心没有成真——安装后启动的会话正常触发。
+- **发现缺口**：两份采集的 Task 段都是 `(no transcript available)` 而 Outcome 有真实内容。排查（对照 rollout 原始文件 + 以同一文件直跑旧二进制）确认：Stop 载荷的 `transcript_path` 指向一个临时 transcript，能提供末条助手结论但不含首个用户请求；ZCode 持久的 `~/.zcode/cli/rollout/model-io-<session>.jsonl` 才有完整会话。
+- **修复**：`capture-session` 对 `source=zcode` 且带会话 id 的采集增加 rollout 回退——按 session id 定位 rollout（id 做字符白名单防路径穿越），从 `request.body.messages` 取首个用户请求（跳过 `<system-reminder>` 注入上下文与 tool 部分）、从 `response.text` 取末条助手结论；transcript 与 rollout 各字段独立取先到者，共用既有的 4 MiB 头尾截取与 4000 字上限，落盘前照常脱敏。对两份真实 rollout 的端到端验证：M4 会话提取出首任务「接着向下推进项目吧」与实际落盘 Outcome 逐字一致的结论；ETH 会话同理。测试 6 个新增（rollout 提取/优先级/缺文件回退/reminder 跳过/端到端 HOME 注入/id 净化），`scripts/check.sh` 全绿；`bin/memoryd.exe` 已换新（rename 交换避开运行中进程锁），下次钩子触发即生效。
