@@ -2,7 +2,7 @@
 
 Local-first, file-based memory for AI agents: a self-organizing tree of Markdown memories shared across ZCode, OpenCode, Qoder, and any MCP-capable client.
 
-> **Status: M2 write path complete.** Everything from M1 (v1 format, validator, init, legacy import, disposable SQLite FTS5 index, read-only MCP server, 20-question benchmark at 20/20) plus the write gateway: `memory_add` / `memory_supersede` over MCP and CLI with input validation by rule code, atomic writes, a single-writer lock with crash recovery, git commits, index refresh, and the `memoryd inbox` capture flow. Concurrency, crash, and supersede acceptance pass; the three newer memories are imported (40 entries, bench 21/21, [results](docs/m2-acceptance.md)). Next: M3 insertion placement and gardener proposals.
+> **Status: M3 complete.** Everything from M1/M2 (v1 format, validator, init, legacy import, disposable SQLite FTS5 index, read-only MCP server, write gateway `memory_add` / `memory_supersede`, `memoryd inbox` capture) plus insertion placement and the gardener: `memory_suggest_mount` over MCP and CLI, `memoryd gardener data/apply` with six primitives, rule-code validation, dry-run by default, rollback, and a single git commit per proposal. The approved restructure of the live repository landed as one `gardener:` commit (bench 21/21). Next: `memoryd doctor` crash recovery, release hardening.
 
 ## Why
 
@@ -131,7 +131,7 @@ The user data repository is separate. The default is `~/.memorytree`; it can be 
 - **M0** — complete: format spec, JSON Schemas, Go skeleton, validator, legacy import
 - **M1** — feature-complete and benchmarked: FTS5 trigram index (fingerprint, generation, `--rebuild`), the read-only MCP server (`brief/search/get/tree`), and the 20-question benchmark against `MEMORY.md` + grep. Rerun on 2026-10-25 after short-query ranking and excerpt retrieval: 20/20 complete and first-hit answers, 14,723 vs 67,796 tokens per task, near parity when `MEMORY.md` is amortized. Engineering hardening landed on 2026-10-26: cross-platform CI with a schema consistency job, direct parser tests and fuzz seeds, a scale baseline ([docs/perf-baseline.md](docs/perf-baseline.md)), the `memoryd bench` retrieval regression gate, a rune-split FTS index for short CJK queries (schema v2), and stale-index warnings with request deadlines in the MCP server
 - **M2** — complete (2026-10-27): write gateway `memory_add`/`memory_supersede` over MCP and CLI (rule-code validation, atomic writes, single-writer lock with crash recovery, git commits, index refresh), `memoryd inbox` capture with the distillation prompt, the three newer memories imported, concurrency and crash tests — acceptance in [docs/m2-acceptance.md](docs/m2-acceptance.md)
-- **M3** — next: insertion placement, gardener proposals, release hardening
+- **M3** — complete (2026-10-27): insertion placement (`memory_suggest_mount`, leave-one-out top-1 97.5% / top-3 100% at 40 entries) and the gardener (`gardener data/apply`, six primitives, 17 G- rule codes, dry-run by default, rollback, one commit per proposal) — acceptance in [docs/m3-acceptance.md](docs/m3-acceptance.md). The user-approved restructure of the live repository is applied. Release hardening remains, together with the 100-entry placement re-test once the corpus grows
 
 ## Deliberately deferred
 
