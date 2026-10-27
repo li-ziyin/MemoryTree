@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/li-ziyin/memorytree/internal/index"
+	"github.com/li-ziyin/memorytree/internal/usagelog"
 	"github.com/li-ziyin/memorytree/internal/validate"
 )
 
@@ -56,6 +57,10 @@ type Server struct {
 	// missLogged deduplicates retrieval-miss recording per query for this
 	// session, so a client retry loop cannot flood the log.
 	missLogged map[string]bool
+	// usageIDs deduplicates usage recording per entry for this session:
+	// repeated returns by the same session still count once, keeping the
+	// log a fair proxy for cross-session usefulness.
+	usageLogged map[string]bool
 }
 
 // New prepares a server for an opened index.
@@ -78,6 +83,7 @@ func New(ix *index.Index, opts Options) (*Server, error) {
 		fingerprint:  meta.Fingerprint,
 		lastCheck:    time.Now(),
 		missLogged:   map[string]bool{},
+		usageLogged:  map[string]bool{},
 	}
 	return srv, nil
 }
@@ -348,4 +354,25 @@ func (s *Server) entry(ctx context.Context, id string) (*index.Entry, error) {
 
 func (s *Server) entryCounts(ctx context.Context) (map[string]index.EntryCount, error) {
 	return s.index.EntryCounts(ctx)
+}
+
+// recordUsage appends one return signal per entry ID to the usage log,
+// best effort: a logging failure must never fail the read. Each entry is
+// recorded at most once per server session so one client's retry loop
+// cannot inflate its counts.
+func (s *Server) recordUsage(ids []string, source string) {
+	if s.root == "" || len(ids) == 0 {
+		return
+	}
+	var fresh []string
+	for _, id := range ids {
+		key := source + "\x00" + id
+		if !s.usageLogged[key] {
+			s.usageLogged[key] = true
+			fresh = append(fresh, id)
+		}
+	}
+	if len(fresh) > 0 {
+		_ = usagelog.Record(s.root, fresh, source, time.Now())
+	}
 }

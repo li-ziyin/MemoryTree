@@ -481,6 +481,13 @@ func (s *Server) memoryBrief(ctx context.Context, raw json.RawMessage) (*Envelop
 		warnings = append(warnings, "brief includes private-sensitivity memories; do not forward it outside this machine")
 	}
 
+	// Only entries that survived the budget are usage signals.
+	included := make([]string, 0, len(used))
+	for _, item := range append(append(append(append([]briefItem{}, data.User...), data.ProjectUpdates...), data.Related...), data.Pending...) {
+		included = append(included, item.ID)
+	}
+	s.recordUsage(included, "brief")
+
 	total := len(data.User) + len(data.ProjectUpdates) + len(data.Related) + len(data.Pending)
 	return s.envelope(data, total, warnings...), nil
 }
@@ -588,6 +595,13 @@ func (s *Server) memorySearch(ctx context.Context, raw json.RawMessage) (*Envelo
 	if err != nil {
 		return nil, indexFailure(err)
 	}
+	// Returned hits are the entry's usefulness signal; only entries the
+	// caller actually saw are recorded.
+	ids := make([]string, 0, len(hits))
+	for _, hit := range hits {
+		ids = append(ids, hit.ID)
+	}
+	s.recordUsage(ids, "search")
 	items := make([]searchItem, 0, len(hits))
 	for _, hit := range hits {
 		items = append(items, searchItem{Hit: hit, Trust: trustUntrusted})
@@ -652,6 +666,7 @@ func (s *Server) memoryGet(ctx context.Context, raw json.RawMessage) (*Envelope,
 	if err != nil {
 		return nil, indexFailure(err)
 	}
+	s.recordUsage([]string{entry.ID}, "get")
 
 	var warnings []string
 	if entry.SupersededBy != nil {

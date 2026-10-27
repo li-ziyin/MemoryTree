@@ -19,12 +19,13 @@ import (
 // create_node + move_node/move_entry, a merge is move_node/move_entry +
 // archive_node.
 const (
-	OpMoveNode    = "move_node"
-	OpMoveEntry   = "move_entry"
-	OpRetagNode   = "retag_node"
-	OpReviseNode  = "revise_node"
-	OpCreateNode  = "create_node"
-	OpArchiveNode = "archive_node"
+	OpMoveNode       = "move_node"
+	OpMoveEntry      = "move_entry"
+	OpRetagNode      = "retag_node"
+	OpReviseNode     = "revise_node"
+	OpCreateNode     = "create_node"
+	OpArchiveNode    = "archive_node"
+	OpDeprecateEntry = "deprecate_entry"
 )
 
 // MaxOperations bounds one proposal so a runaway agent cannot propose
@@ -37,6 +38,7 @@ const (
 	CodeMalformed  = "G-OP-1"
 	CodeNodeGone   = "G-NODE-1"
 	CodeEntryGone  = "G-ENTRY-1"
+	CodeEntryStat  = "G-ENTRY-2"
 	CodeCycle      = "G-CYCLE-1"
 	CodeKind       = "G-KIND-1"
 	CodeSlug       = "G-SLUG-1"
@@ -178,6 +180,7 @@ type simState struct {
 	rootID           string
 	entryNode        map[string]string
 	entryFile        map[string]string // entry id -> repo-relative file path
+	entryStatus      map[string]string // entry id -> status
 	entrySensitivity map[string]string
 	entryDelta       map[string][]string // entry id -> own tags_delta
 }
@@ -187,6 +190,7 @@ func newSimState(snap *validate.Snapshot) *simState {
 		nodes:            map[string]*simNode{},
 		entryNode:        map[string]string{},
 		entryFile:        map[string]string{},
+		entryStatus:      map[string]string{},
 		entrySensitivity: map[string]string{},
 		entryDelta:       map[string][]string{},
 	}
@@ -208,6 +212,7 @@ func newSimState(snap *validate.Snapshot) *simState {
 	for _, e := range snap.Entries {
 		st.entryNode[e.ID] = e.NodeID
 		st.entryFile[e.ID] = e.Path
+		st.entryStatus[e.ID] = e.Status
 		st.entrySensitivity[e.ID] = e.Sensitivity
 		st.entryDelta[e.ID] = e.TagsDelta
 	}
@@ -328,6 +333,8 @@ func (st *simState) apply(op Operation) (code, msg string, warnings []string, de
 		return st.applyCreateNode(op)
 	case OpArchiveNode:
 		return st.applyArchiveNode(op)
+	case OpDeprecateEntry:
+		return st.applyDeprecateEntry(op)
 	default:
 		return CodeMalformed, fmt.Sprintf("unknown op %q", op.Op), nil, "", Step{}
 	}
@@ -573,6 +580,22 @@ func (st *simState) applyArchiveNode(op Operation) (string, string, []string, st
 	return "", "", nil, fmt.Sprintf("%s -> archived (descendants keep their own status)", st.path(node.id)), step
 }
 
+// applyDeprecateEntry retires an entry as a cold-entry decision: active and
+// draft entries may be deprecated (format 12.7), superseded entries are
+// terminal, and deprecating an already deprecated entry is a no-op mistake.
+func (st *simState) applyDeprecateEntry(op Operation) (string, string, []string, string, Step) {
+	status, ok := st.entryStatus[op.Entry]
+	if !ok {
+		return CodeEntryGone, fmt.Sprintf("entry %q does not exist", op.Entry), nil, "", Step{}
+	}
+	if status != model.StatusActive && status != model.EntryDraft {
+		return CodeEntryStat, fmt.Sprintf("entry %s is %s; only active or draft entries can be deprecated", op.Entry, status), nil, "", Step{}
+	}
+	st.entryStatus[op.Entry] = model.EntryDeprecated
+	step := Step{Op: OpDeprecateEntry, Entry: op.Entry, FromPath: st.entryFile[op.Entry]}
+	return "", "", nil, fmt.Sprintf("entry %s: %s -> deprecated (excluded from default retrieval)", op.Entry, status), step
+}
+
 // Plan simulates the proposal against the snapshot without touching the
 // file system. Every operation is validated against the state left by the
 // previous ones, so chained operations (create + move) work. When every
@@ -595,6 +618,7 @@ func Plan(snap *validate.Snapshot, p *Proposal) *Report {
 
 	st := newSimState(snap)
 	affected := map[string]bool{}
+	var steps []Step
 	for i, op := range p.Operations {
 		opr := OpReport{Index: i, Op: op.Op, Target: opTarget(op)}
 		code, msg, warnings, detail, step := st.apply(op)
@@ -611,13 +635,15 @@ func Plan(snap *validate.Snapshot, p *Proposal) *Report {
 		}
 		opr.Status = "applied"
 		report.Ops = append(report.Ops, opr)
-		report.Steps = append(report.Steps, step)
+		steps = append(steps, step)
 		switch op.Op {
 		case OpMoveNode, OpRetagNode, OpReviseNode, OpArchiveNode, OpCreateNode:
 			affected[op.Node] = true
-		case OpMoveEntry:
+		case OpMoveEntry, OpDeprecateEntry:
 			affected[op.Entry] = true
-			report.MovedEntries++
+			if op.Op == OpMoveEntry {
+				report.MovedEntries++
+			}
 		}
 	}
 
@@ -641,6 +667,10 @@ func Plan(snap *validate.Snapshot, p *Proposal) *Report {
 				fmt.Sprintf("%s: %d children exceed the recommended 8 (%s)", st.path(parentID), count, CodeBranchWarn))
 		}
 	}
+	// The executable plan ships only when every operation passed.
+	if report.OK {
+		report.Steps = steps
+	}
 	return report
 }
 
@@ -653,7 +683,7 @@ func Check(snap *validate.Snapshot, p *Proposal) *Report {
 
 func opTarget(op Operation) string {
 	switch op.Op {
-	case OpMoveEntry:
+	case OpMoveEntry, OpDeprecateEntry:
 		return op.Entry
 	case OpCreateNode:
 		return op.Target + "/" + op.Slug

@@ -208,6 +208,8 @@ func (ex *gardenerExecutor) run(steps []gardener.Step) error {
 			err = ex.createNode(step)
 		case gardener.OpArchiveNode:
 			err = ex.archiveNode(step)
+		case gardener.OpDeprecateEntry:
+			err = ex.deprecateEntry(step)
 		default:
 			err = fmt.Errorf("unknown step op %q", step.Op)
 		}
@@ -475,6 +477,32 @@ func (ex *gardenerExecutor) archiveNode(step gardener.Step) error {
 	}
 	node.Status = model.StatusArchived
 	return ex.saveNode(dir, original, body, node)
+}
+
+// deprecateEntry rewrites one entry's frontmatter to status: deprecated,
+// preserving the body verbatim; the undo restores the original bytes.
+func (ex *gardenerExecutor) deprecateEntry(step gardener.Step) error {
+	abs := ex.abs(step.FromPath)
+	doc, err := format.ReadFile(abs)
+	if err != nil {
+		return err
+	}
+	var entry model.Entry
+	if err := format.Decode(doc.Meta, &entry); err != nil {
+		return err
+	}
+	entry.Status = model.EntryDeprecated
+	entry.UpdatedAt = now().Format(timeFormat)
+	data, err := docfile.MarshalFrontmatter(&entry, doc.Body)
+	if err != nil {
+		return err
+	}
+	if err := writeFileAtomic(abs, data); err != nil {
+		return err
+	}
+	ex.rememberRestore(abs, doc.Raw)
+	ex.rels = append(ex.rels, step.FromPath)
+	return nil
 }
 
 func sortedCopy(in []string) []string {

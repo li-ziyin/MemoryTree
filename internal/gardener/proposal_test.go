@@ -139,6 +139,57 @@ func TestPlanBlocksRuleViolations(t *testing.T) {
 	}
 }
 
+func TestPlanDeprecateEntry(t *testing.T) {
+	snap := exampleSnapshot(t)
+	report := Plan(snap, &Proposal{
+		Operations: []Operation{
+			{Op: OpDeprecateEntry, Entry: exSSE, Reason: "cold entry"},
+		},
+	})
+	if !report.OK {
+		t.Fatalf("expected OK, got %+v", report.Ops)
+	}
+	step := report.Steps[0]
+	if step.Entry != exSSE || step.FromPath != "work/agentflow/memories/2026-10-20-sse-pitfall.md" {
+		t.Fatalf("step = %+v", step)
+	}
+	if report.Affected != 1 {
+		t.Errorf("affected = %d, want 1", report.Affected)
+	}
+}
+
+func TestPlanDeprecateEntryRuleViolations(t *testing.T) {
+	snap := exampleSnapshot(t)
+	report := Plan(snap, &Proposal{
+		Operations: []Operation{
+			{Op: OpDeprecateEntry, Entry: "019a2f4e-7c1a-7b3d-9e21-4f6a8c2d1b99"},
+		},
+	})
+	if report.OK {
+		t.Fatalf("unknown entry accepted: %+v", report.Ops)
+	}
+	if got := report.Ops[0].Code; got != CodeEntryGone {
+		t.Errorf("code = %s, want %s", got, CodeEntryGone)
+	}
+
+	// Deprecating twice: the second op sees the simulated status.
+	report = Plan(snap, &Proposal{
+		Operations: []Operation{
+			{Op: OpDeprecateEntry, Entry: exSSE, Reason: "cold"},
+			{Op: OpDeprecateEntry, Entry: exSSE, Reason: "again"},
+		},
+	})
+	if report.OK {
+		t.Fatalf("double deprecation accepted: %+v", report.Ops)
+	}
+	if got := report.Ops[1].Code; got != CodeEntryStat {
+		t.Errorf("code = %s, want %s", got, CodeEntryStat)
+	}
+	if len(report.Steps) != 0 {
+		t.Errorf("blocked proposal leaked steps: %+v", report.Steps)
+	}
+}
+
 func TestPlanSensitivityWeakerThanTarget(t *testing.T) {
 	// A hand-built snapshot: a public entry cannot move into a private node
 	// (V-SENS-1: an entry must never be less strict than its host).

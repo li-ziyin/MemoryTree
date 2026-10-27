@@ -96,6 +96,65 @@ func TestGardenerCreateApplyAndCommit(t *testing.T) {
 	}
 }
 
+// TestGardenerDeprecateEntry is the M4 usage-signal acceptance: a cold
+// entry is retired by a deprecate_entry proposal — dry-run plans it, the
+// real apply rewrites only the status, and the body survives verbatim.
+func TestGardenerDeprecateEntry(t *testing.T) {
+	root := newRepo(t)
+	added, err := AddEntry(root, validInput())
+	if err != nil {
+		t.Fatal(err)
+	}
+	bodyBefore, err := os.ReadFile(added.Path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	proposal := &gardener.Proposal{
+		Author: "test-agent",
+		Reason: "cold entry retirement",
+		Operations: []gardener.Operation{
+			{Op: gardener.OpDeprecateEntry, Entry: added.ID, Reason: "never returned in 90+ days"},
+		},
+	}
+
+	dry, err := ApplyGardenerProposal(root, proposal, GardenerOptions{DryRun: true})
+	if err != nil || !dry.Report.OK {
+		t.Fatalf("dry-run: %v, report %+v", err, dry.Report.Ops)
+	}
+	if n := gitLogCount(t, root); n != 2 { // baseline + the add
+		t.Fatalf("dry-run changed history: %d commits", n)
+	}
+
+	res, err := ApplyGardenerProposal(root, proposal, GardenerOptions{})
+	if err != nil {
+		t.Fatalf("apply: %v", err)
+	}
+	if !res.Committed {
+		t.Fatalf("apply was not committed")
+	}
+	snap := mustValidateClean(t, root)
+	for _, e := range snap.Entries {
+		if e.ID == added.ID {
+			if e.Status != model.EntryDeprecated {
+				t.Fatalf("status = %s, want deprecated", e.Status)
+			}
+		}
+	}
+	after, err := os.ReadFile(added.Path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(after) == string(bodyBefore) {
+		t.Fatal("entry file was not rewritten")
+	}
+	if !strings.Contains(string(after), "status: deprecated") {
+		t.Fatalf("rewritten frontmatter missing deprecated status:\n%s", after)
+	}
+	if !strings.Contains(string(after), "正文：先 docker compose logs，再核对端口。") {
+		t.Fatalf("body not preserved verbatim:\n%s", after)
+	}
+}
+
 func TestGardenerDryRunTouchesNothing(t *testing.T) {
 	root := newRepo(t)
 	before := gitLogCount(t, root)

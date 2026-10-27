@@ -12,6 +12,8 @@ import (
 	"github.com/li-ziyin/memorytree/internal/ids"
 	"github.com/li-ziyin/memorytree/internal/misslog"
 	"github.com/li-ziyin/memorytree/internal/model"
+	"github.com/li-ziyin/memorytree/internal/usagelog"
+	"github.com/li-ziyin/memorytree/internal/validate"
 )
 
 // addNode writes a node directory with node.md into the copied example repo.
@@ -69,6 +71,83 @@ func TestDataIncludesQueryMisses(t *testing.T) {
 	top := report.QueryMisses[0]
 	if top.Query != "arkts 布局" || top.Count != 2 || top.Last != "2026-10-27T09:05:00Z" {
 		t.Errorf("top miss = %+v", top)
+	}
+}
+
+// TestDataIncludesEntryUsage checks the M4 usage package: per-entry return
+// counts from the MCP log, and the cold flag on a never-returned entry
+// whose updated_at is older than the 90-day threshold. Counts live only in
+// the derived log under .index/, never in the memory files.
+func TestDataIncludesEntryUsage(t *testing.T) {
+	root := t.TempDir()
+	if err := os.CopyFS(root, os.DirFS(filepath.Join("..", "..", "spec", "examples"))); err != nil {
+		t.Fatalf("copy example: %v", err)
+	}
+	// Age the SSE entry past the cold threshold; the user profile stays recent.
+	// created_at must match the filename date and updated_at must not precede
+	// created_at, so all three move together.
+	entryPath := filepath.Join(root, "work", "agentflow", "memories", "2026-10-20-sse-pitfall.md")
+	raw, err := os.ReadFile(entryPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	aged := strings.Replace(string(raw), "2026-10-20T00:00:00Z", "2026-01-01T00:00:00Z", -1)
+	if aged == string(raw) {
+		t.Fatal("could not age the example entry")
+	}
+	agedPath := filepath.Join(root, "work", "agentflow", "memories", "2026-01-01-sse-pitfall.md")
+	if err := os.WriteFile(agedPath, []byte(aged), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(entryPath); err != nil {
+		t.Fatal(err)
+	}
+
+	_, snap, err := validate.ValidateWithSnapshot(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var userEntry, sseEntry validate.EntryInfo
+	for _, e := range snap.Entries {
+		switch e.NodePath {
+		case "global":
+			userEntry = e
+		case "work/agentflow":
+			sseEntry = e
+		}
+	}
+	if userEntry.ID == "" || sseEntry.ID == "" {
+		t.Fatalf("example entries not found in snapshot")
+	}
+	if err := usagelog.Record(root, []string{userEntry.ID}, "search", time.Date(2026, 10, 26, 8, 0, 0, 0, time.UTC)); err != nil {
+		t.Fatal(err)
+	}
+
+	_, report, err := Data(root)
+	if err != nil || report == nil {
+		t.Fatalf("data: %v, report %v", err, report)
+	}
+	byID := map[string]EntryUsageStat{}
+	for _, u := range report.EntryUsage {
+		byID[u.ID] = u
+	}
+	user, ok := byID[userEntry.ID]
+	if !ok {
+		t.Fatalf("user entry missing from entry_usage: %+v", report.EntryUsage)
+	}
+	if user.Returns != 1 || user.LastReturn != "2026-10-26T08:00:00Z" || user.Cold {
+		t.Errorf("user usage = %+v", user)
+	}
+	sse, ok := byID[sseEntry.ID]
+	if !ok {
+		t.Fatalf("sse entry missing from entry_usage: %+v", report.EntryUsage)
+	}
+	if sse.Returns != 0 || sse.LastReturn != "" || !sse.Cold {
+		t.Errorf("cold sse usage = %+v", sse)
+	}
+	// The counts are derived data: the memory files stay untouched by them.
+	if strings.Contains(aged, "returns") {
+		t.Errorf("usage counts leaked into the memory file")
 	}
 }
 

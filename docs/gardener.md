@@ -28,7 +28,8 @@ memoryd gardener apply --apply <data-dir> < proposal.json # 4. apply (after huma
     {"op": "revise_node", "node": "work/agentflow", "summary": "new summary", "reason": "..."},
     {"op": "create_node", "target": "work", "kind": "project", "slug": "ml",
      "title": "ML", "summary": "machine-learning experiments", "tags_delta": ["ml"], "reason": "..."},
-    {"op": "archive_node", "node": "work/old-thing", "reason": "..."}
+    {"op": "archive_node", "node": "work/old-thing", "reason": "..."},
+    {"op": "deprecate_entry", "entry": "<UUIDv7>", "reason": "cold: never returned in 90+ days"}
   ]
 }
 ```
@@ -38,6 +39,7 @@ memoryd gardener apply --apply <data-dir> < proposal.json # 4. apply (after huma
 - split = `create_node` + `move_node`/`move_entry`; merge = moves + `archive_node`.
 - Cap: 200 operations per proposal.
 - `move_entry` automatically drops tags from the entry's `tags_delta` that the target node already provides (V-TAG-2); the step reports `drop_tags`.
+- `deprecate_entry` retires an active or draft entry (`status: deprecated`, excluded from default retrieval); it is the matching op for cold entries surfaced by `entry_usage`.
 
 ## Rule codes (G-)
 
@@ -45,6 +47,7 @@ memoryd gardener apply --apply <data-dir> < proposal.json # 4. apply (after huma
 |---|---|
 | G-OP-1 | unknown operation or malformed step |
 | G-NODE-1 / G-ENTRY-1 | referenced node/entry does not exist |
+| G-ENTRY-2 | deprecate_entry on an entry that is not active or draft (superseded is terminal, deprecated already retired) |
 | G-CYCLE-1 | move into itself or a descendant |
 | G-KIND-1/2/3/4 | kind limits: project/global may not have children; create builds only project/category; entries enter only project/global; root and global cannot be archived |
 | G-SLUG-1 | slug illegal, reserved, or colliding under the target parent |
@@ -58,3 +61,5 @@ memoryd gardener apply --apply <data-dir> < proposal.json # 4. apply (after huma
 ## Package signals
 
 `gardener data` reports, per node: path, kind, effective tags and deltas, depth, child count, entry count, timestamps, plus the structural signals `children>8`, `depth>4`, and `empty-project`; it also reports effective-tag overlap between same-parent node pairs (Jaccard ≥ 0.5) as merge/restructure triggers, and aggregates the MCP layer's retrieval-miss log (`query_misses`: the queries that kept finding nothing, with counts and last-seen times) — repeated misses are the third restructuring trigger.
+
+`entry_usage` lists every active and draft entry with its return history from the MCP layer: how often `memory_search` / `memory_brief` / `memory_get` returned it (`returns`), when that last happened (`last_return`, empty when never), and a `cold` flag for entries never returned and untouched for 90+ days. Cold entries are the deprecation candidates — propose `deprecate_entry` for them. The counts are derived data living only in the disposable `.index/` log; they never appear in the memory files.

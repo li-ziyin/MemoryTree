@@ -7,6 +7,7 @@ import (
 
 	"github.com/li-ziyin/memorytree/internal/misslog"
 	"github.com/li-ziyin/memorytree/internal/model"
+	"github.com/li-ziyin/memorytree/internal/usagelog"
 	"github.com/li-ziyin/memorytree/internal/validate"
 )
 
@@ -41,6 +42,24 @@ type PairSignal struct {
 	Jaccard    float64  `json:"jaccard"`
 }
 
+// EntryUsageStat is one entry's return history from the MCP usage log:
+// how often search/brief/get returned it and when that last happened.
+// Cold entries (never returned and long untouched) are the deprecation
+// candidates; the counts themselves are derived data and never appear in
+// the memory files.
+type EntryUsageStat struct {
+	ID         string `json:"id"`
+	NodeID     string `json:"node_id"`
+	NodePath   string `json:"node_path"`
+	Type       string `json:"type"`
+	Status     string `json:"status"`
+	Title      string `json:"title"`
+	UpdatedAt  string `json:"updated_at"`
+	Returns    int    `json:"returns"`
+	LastReturn string `json:"last_return,omitempty"` // RFC3339, empty when never returned
+	Cold       bool   `json:"cold"`
+}
+
 // DataReport is the complete analysis package an agent reasons over to
 // author a Proposal.
 type DataReport struct {
@@ -53,11 +72,19 @@ type DataReport struct {
 	// that kept finding nothing, a restructuring trigger. Empty when no
 	// misses are recorded.
 	QueryMisses []misslog.Miss `json:"query_misses,omitempty"`
-	Guidelines  string         `json:"guidelines"`
+	// EntryUsage lists every active and draft entry with its return counts
+	// from the MCP usage log; cold flags never-returned entries older
+	// than coldAfter. Empty when the repository has no such entries.
+	EntryUsage []EntryUsageStat `json:"entry_usage"`
+	Guidelines string           `json:"guidelines"`
 }
 
 // pairJaccardMin is the overlap threshold for a pair signal.
 const pairJaccardMin = 0.5
+
+// coldAfter is how long an entry with zero recorded returns must have been
+// untouched before the data package flags it cold.
+const coldAfter = 90 * 24 * time.Hour
 
 // Data validates the repository and builds the analysis package.
 func Data(root string) (*validate.Result, *DataReport, error) {
@@ -122,7 +149,41 @@ func Data(root string) (*validate.Result, *DataReport, error) {
 	if misses, err := misslog.Top(root, 10); err == nil {
 		report.QueryMisses = misses
 	}
+	if usage, err := usagelog.Aggregate(root); err == nil {
+		report.EntryUsage = usageStats(snap, usage, time.Now().UTC())
+	}
 	return res, report, nil
+}
+
+// usageStats joins snapshot entries with their return history. Only active
+// and draft entries are listed: superseded and deprecated entries are
+// terminal and no longer deprecation candidates.
+func usageStats(snap *validate.Snapshot, usage map[string]usagelog.Usage, now time.Time) []EntryUsageStat {
+	stats := make([]EntryUsageStat, 0, len(snap.Entries))
+	for _, e := range snap.Entries {
+		if e.Status != model.StatusActive && e.Status != model.EntryDraft {
+			continue
+		}
+		u := usage[e.ID]
+		stat := EntryUsageStat{
+			ID: e.ID, NodeID: e.NodeID, NodePath: e.NodePath, Type: e.Type,
+			Status: e.Status, Title: e.Title, UpdatedAt: e.UpdatedAt,
+			Returns: u.Count, LastReturn: u.Last,
+		}
+		if u.Count == 0 {
+			if updated, err := time.Parse(time.RFC3339, e.UpdatedAt); err == nil && now.Sub(updated) > coldAfter {
+				stat.Cold = true
+			}
+		}
+		stats = append(stats, stat)
+	}
+	sort.Slice(stats, func(i, j int) bool {
+		if stats[i].NodePath != stats[j].NodePath {
+			return stats[i].NodePath < stats[j].NodePath
+		}
+		return stats[i].ID < stats[j].ID
+	})
+	return stats
 }
 
 // overlapSignals compares every pair of nodes that share a parent.
@@ -190,8 +251,11 @@ Operations (node references are UUIDv7 or slug path; paths resolve against the t
 - {"op":"retag_node","node":"x","add":["tag"],"remove":["tag"],"reason":"..."}
 - {"op":"revise_node","node":"x","title":"...","summary":"...","reason":"..."}   (omit a field to keep it)
 - {"op":"create_node","target":"parent","kind":"project|category","slug":"...","title":"...","summary":"...","tags_delta":[...],"sensitivity":"inherit|public|internal|private","reason":"..."}
-- {"op":"archive_node","node":"x","reason":"..."}   (descendants keep their own status)
+	- {"op":"archive_node","node":"x","reason":"..."}   (descendants keep their own status)
+	- {"op":"deprecate_entry","entry":"UUID","reason":"..."}   (active/draft -> deprecated, excluded from default retrieval; prefer for cold entries)
 Split = create_node + moves; merge = moves + archive_node. Stay within depth 4 and 8 children per node.
+Entry usage is in entry_usage: returns/last_return per entry; cold means never returned and untouched for 90+ days —
+deprecate_entry is the matching retirement op, and a deprecation without a replacement is fine (spec 12.7).
 Rules enforced by memoryd gardener apply: no cycles, no slug conflicts, tags_delta never repeats inherited tags,
 entries only move to active project/global nodes, sensitivity never weakens, root/global cannot move or archive.
 Run "memoryd gardener apply --dry-run" first; a human approves the real apply. Propose only changes the signals justify.`
