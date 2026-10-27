@@ -84,7 +84,7 @@ Each candidate carries its score, matched tags, matched tokens, and a rationale,
 
 ### memory_add *(write)*
 
-Write one new entry: rule-code validation, secret redaction, atomic write, git commit, index refresh — all under the single-writer lock. The entry is searchable in the same session.
+Write one new entry: rule-code validation, atomic write, git commit, index refresh — all under the single-writer lock. The entry is searchable in the same session.
 
 | Parameter | Type | Required | Notes |
 |---|---|---|---|
