@@ -35,15 +35,17 @@
 ## 收尾补记（同日）
 
 - 数据仓未跟踪的 `bench-questions.jsonl` 已提交入 git——它是 `memoryd bench` 的回归题集，留着未跟踪会让 sync 拒绝脏树。
-- 数据仓与源码仓当前都未配置 git remote；首次 `memoryd sync` 前需 `git -C <data-dir> push -u <remote> HEAD` 设上游（remote 选择待用户定）。
+- ~~数据仓与源码仓当前都未配置 git remote~~ 已解决（2026-10-27 晚）：用户定自建 remote；裸仓建于第二块物理盘 `D:\GitRepos`（见下方「生产验证补记」）。
 
 ## 遗留
 
 - ~~捕获 hooks 的**真实触发**验证~~ ZCode 侧已验证（见下节「生产验证补记」）；OpenCode 插件在 `session.idle` 载荷字段上仅做了宽松兼容（`sessionID`/`session` 两名都取），首次真实触发后如有字段偏差再补。Qoder/WorkBuddy/DeepSeek 无已验证机制，维持手工路径。
-- 数据仓尚未配置 git remote；`memoryd sync` 首次使用前需 `git -C E:\MemoryTreeData push -u <remote> HEAD` 设好上游。
+- ~~数据仓尚未配置 git remote~~ 已解决（2026-10-27 晚）：自建 remote——两块物理盘（E: 为磁盘 0、D: 为磁盘 1），裸仓建在 `D:\GitRepos\memorytree-data.git` 与 `D:\GitRepos\memorytree.git`，两仓 `push -u origin HEAD` 完成；随后对数据仓真实跑通 `memoryd sync`（`already up to date with origin/main`，即此前修过的 up-to-date 路径）。模块路径就此定案保持 `github.com/li-ziyin/memorytree`（详见 DESIGN §9）。
 - 冷条目闭环的真实提案：`entry_usage` 日志刚启用，需积累一段使用数据后由 gardener 出首个 `deprecate_entry` 提案。
 
 ## 生产验证补记（2026-10-27 晚）
+
+- **自建 remote 落地**：用户选定自建（方便、单机无服务依赖）。E: 与 D: 恰为两块不同物理盘，裸仓 `D:\GitRepos\memorytree-data.git`、`D:\GitRepos\memorytree.git`（`git init --bare -b main`），两仓 `git remote add origin` + `push -u origin HEAD` 一次成功。数据仓随即真实运行 `memoryd sync`：走通「远端无落后、无可推送」的 up-to-date 路径（正是 M4 修复过的误判场景），退出码 0。跨盘裸仓同时充当备份：E: 盘故障时 D: 有完整副本。
 
 钩子装好后的第一批真实会话给出了生产证据，也暴露并催生了一个修复：
 
