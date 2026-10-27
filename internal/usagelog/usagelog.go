@@ -10,6 +10,7 @@ package usagelog
 import (
 	"bufio"
 	"encoding/json"
+	"math"
 	"os"
 	"path/filepath"
 	"time"
@@ -116,4 +117,48 @@ func readInto(p string, agg map[string]Usage) error {
 		agg[e.ID] = u
 	}
 	return scanner.Err()
+}
+
+// Heat ranking parameters. alpha bounds how much usage can matter: the
+// multiplier saturates at 1+alpha*ln(1+count), so even a thousand returns
+// lift a hit by roughly 2x and relevance still dominates. The half-life
+// decays stale popularity so a burst of use years ago fades out.
+const (
+	heatAlpha    = 0.15
+	heatHalfLife = 90 * 24 * time.Hour
+)
+
+// Heat returns the entry's ranking multiplier in [1, 1+alpha*ln(1+count)]:
+// frequently returned entries get a mild, time-decayed boost; never-returned
+// ones get exactly 1 — cold is the absence of a boost, never a penalty.
+// Malformed timestamps count as no decay information and yield the full
+// boost for the recorded count.
+func (u Usage) Heat(now time.Time) float64 {
+	if u.Count <= 0 {
+		return 1
+	}
+	decay := 1.0
+	if last, err := time.Parse(time.RFC3339, u.Last); err == nil {
+		age := now.Sub(last)
+		if age < 0 {
+			age = 0
+		}
+		decay = math.Exp2(-age.Hours() / heatHalfLife.Hours())
+	}
+	return 1 + heatAlpha*math.Log1p(float64(u.Count))*decay
+}
+
+// Heats aggregates the log and returns each entry's current ranking
+// multiplier. Entries never returned are absent from the map; callers treat
+// a missing entry as 1.
+func Heats(root string, now time.Time) (map[string]float64, error) {
+	agg, err := Aggregate(root)
+	if err != nil {
+		return nil, err
+	}
+	heats := make(map[string]float64, len(agg))
+	for id, u := range agg {
+		heats[id] = u.Heat(now)
+	}
+	return heats, nil
 }

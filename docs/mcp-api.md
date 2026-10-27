@@ -31,7 +31,7 @@ Returned memory text is labelled `"trust": "untrusted-history"`: it is historica
 
 ### memory_brief
 
-A fixed-token-budget context brief assembled deterministically (no generation): user profile, current project overview, task-relevant memories, open questions, warnings. Returns summaries and IDs only; fetch full text with `memory_get`.
+A fixed-token-budget context brief assembled deterministically (no generation): user profile, current project overview, task-relevant memories, open questions, warnings. Returns summaries and IDs only; fetch full text with `memory_get`. The task-relevant (`related`) section follows the same relevance ordering as `memory_search`, including the usage-heat boost, so entries proven useful in past sessions are the ones that survive the token budget; the recency-ordered sections (user, project updates, pending) are not usage-weighted.
 
 | Parameter | Type | Required | Notes |
 |---|---|---|---|
@@ -44,7 +44,9 @@ Project resolution order: explicit `project`, then the `MEMORYTREE_PROJECT` envi
 
 ### memory_search
 
-Full-text search (FTS5 trigram; short CJK terms go through a rune-split index) with filters. Returns summaries, IDs, node paths, and status — never full bodies. A search that finds nothing for a non-empty query is logged to `.index/search-misses.jsonl` (once per query per session); the gardener aggregates those misses as restructuring signals. Every entry this server actually returns — via search, brief, or get — is also logged to `.index/entry-usage.jsonl` (once per entry per tool per session) and surfaces in the gardener data package as per-entry `returns` / `last_return` and a `cold` flag; the counts never enter the memory files.
+Full-text search (FTS5 trigram; short CJK terms go through a rune-split index) with filters. Returns summaries, IDs, node paths, and status — never full bodies; each text-query hit also carries its raw `score` (bm25; more negative ranks better, omitted for unfiltered listings). Text queries are re-ranked with a usage-heat multiplier `1 + 0.15·ln(1+returns)·2^(−age/90d)` derived from the usage log: frequently returned entries float up mildly, never-returned entries are not penalized, and the multiplier saturates ≈3× so relevance always dominates. Unfiltered (empty-query) listings keep recency order.
+
+A search that finds nothing for a non-empty query is logged to `.index/search-misses.jsonl` (once per query per session); the gardener aggregates those misses as restructuring signals. Every entry this server actually returns — via search, brief, or get — is also logged to `.index/entry-usage.jsonl` (once per entry per tool per session) and surfaces in the gardener data package as per-entry `returns` / `last_return` and a `cold` flag; the counts never enter the memory files.
 
 | Parameter | Type | Required | Notes |
 |---|---|---|---|
@@ -69,7 +71,12 @@ Excerpt responses set `excerpted: true` and `full_chars`; a body no longer than 
 
 ### memory_tree
 
-The compressed tree: node IDs, slug paths, titles, summaries, entry counts. No parameters.
+The compressed tree: node IDs, slug paths, titles, summaries, entry counts. Siblings are listed hottest-first by subtree-aggregated usage heat — display order only, the tree itself never moves; without a usage log the order is plain path order.
+
+| Parameter | Type | Required | Notes |
+|---|---|---|---|
+| `node` | string | no | Subtree root: node UUIDv7 or slug path. Defaults to the repository root. |
+| `depth` | integer | no | Max descendant levels below the selected node. 0 = whole subtree. |
 
 ### memory_suggest_mount
 
@@ -128,4 +135,4 @@ Reads are concurrent (SQLite WAL). Writes serialize on a cross-process file lock
 
 ## CLI equivalents
 
-`memoryd suggest-mount`, `add`, and `supersede` mirror the write tools for shell use; `memoryd export` writes a sensitivity-filtered share view; see the [README](../README.md) quick start and the [client integration guide](clients.md).
+`memoryd suggest-mount`, `add`, and `supersede` mirror the write tools for shell use; `memoryd export` writes a sensitivity-filtered share view; see the [README](../README.md) quick start and the [client integration guide](clients.md). `memoryd bench --usage` re-ranks the question set with the repository's real usage log, exercising the same heat re-ranking the read tools serve.

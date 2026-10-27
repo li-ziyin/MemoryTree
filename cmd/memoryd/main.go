@@ -27,8 +27,10 @@ import (
 	"github.com/li-ziyin/memorytree/internal/mcpserver"
 	"github.com/li-ziyin/memorytree/internal/model"
 	"github.com/li-ziyin/memorytree/internal/mount"
+	"github.com/li-ziyin/memorytree/internal/rank"
 	"github.com/li-ziyin/memorytree/internal/reposync"
 	"github.com/li-ziyin/memorytree/internal/store"
+	"github.com/li-ziyin/memorytree/internal/usagelog"
 	"github.com/li-ziyin/memorytree/internal/validate"
 )
 
@@ -261,6 +263,7 @@ func runBench(args []string, stdout, stderr io.Writer) int {
 	fs := flag.NewFlagSet("bench", flag.ContinueOnError)
 	fs.SetOutput(stderr)
 	asJSON := fs.Bool("json", false, "emit machine-readable JSON")
+	withUsage := fs.Bool("usage", false, "re-rank hits with the repository's usage log, mirroring the MCP server")
 	if err := fs.Parse(args); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
 			return 0
@@ -268,7 +271,7 @@ func runBench(args []string, stdout, stderr io.Writer) int {
 		return 2
 	}
 	if fs.NArg() != 2 {
-		fmt.Fprintln(stderr, "usage: memoryd bench [--json] <data-dir> <questions.jsonl>")
+		fmt.Fprintln(stderr, "usage: memoryd bench [--json] [--usage] <data-dir> <questions.jsonl>")
 		return 2
 	}
 	questions, err := bench.LoadQuestions(fs.Arg(1))
@@ -276,7 +279,19 @@ func runBench(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stderr, "memoryd: cannot load questions: %v\n", err)
 		return 2
 	}
-	results, err := bench.Run(fs.Arg(0), questions)
+	var heat rank.HeatOf
+	if *withUsage {
+		heats, err := usagelog.Heats(fs.Arg(0), time.Now())
+		if err != nil {
+			fmt.Fprintf(stderr, "memoryd: cannot read usage log: %v\n", err)
+			return 2
+		}
+		if len(heats) == 0 {
+			fmt.Fprintln(stderr, "memoryd: usage log is empty; --usage re-ranks nothing")
+		}
+		heat = func(id string) float64 { return heats[id] }
+	}
+	results, err := bench.Run(fs.Arg(0), questions, heat)
 	if err != nil {
 		fmt.Fprintf(stderr, "memoryd: bench failed: %v\n", err)
 		return 2

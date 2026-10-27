@@ -58,6 +58,10 @@ type Hit struct {
 	CreatedAt   string   `json:"created_at"`
 	UpdatedAt   string   `json:"updated_at"`
 	Path        string   `json:"path"`
+	// Score is the raw FTS bm25 ranking value for text queries (more
+	// negative ranks first) and 0 for unfiltered listings, letting callers
+	// re-rank hits with external signals.
+	Score float64 `json:"score,omitempty"`
 }
 
 // Search queries the index. Queries whose tokens are all at least three
@@ -81,7 +85,7 @@ func (ix *Index) Search(ctx context.Context, opts SearchOptions) ([]Hit, error) 
 
 	const selectColumns = `SELECT e.id, e.node_id, e.node_path, n.title, e.type, e.status,
 		e.sensitivity, e.title, e.summary, e.tags, e.source_agent, e.source_kind,
-		e.created_at, e.updated_at, e.path
+		e.created_at, e.updated_at, e.path, %s
 		FROM %s JOIN nodes n ON n.id = e.node_id`
 
 	var (
@@ -90,12 +94,12 @@ func (ix *Index) Search(ctx context.Context, opts SearchOptions) ([]Hit, error) 
 	)
 	switch {
 	case len(tokens) == 0:
-		query = fmt.Sprintf(selectColumns, "entries e")
+		query = fmt.Sprintf(selectColumns, "0.0", "entries e")
 		query += whereClause(conditions)
 		query += " ORDER BY e.updated_at DESC, e.id LIMIT ?"
 		args = append(args, filterArgs...)
 	case ftsEligible(tokens):
-		query = fmt.Sprintf(selectColumns, "entries_fts JOIN entries e ON e.rowid = entries_fts.rowid")
+		query = fmt.Sprintf(selectColumns, "bm25(entries_fts)", "entries_fts JOIN entries e ON e.rowid = entries_fts.rowid")
 		query += " WHERE entries_fts MATCH ?"
 		args = append(args, ftsExpression(tokens))
 		for _, condition := range conditions {
@@ -108,7 +112,8 @@ func (ix *Index) Search(ctx context.Context, opts SearchOptions) ([]Hit, error) 
 		if !ok {
 			return []Hit{}, nil
 		}
-		query = fmt.Sprintf(selectColumns, "entries_fts_chars JOIN entries e ON e.rowid = entries_fts_chars.rowid")
+		query = fmt.Sprintf(selectColumns, "bm25(entries_fts_chars, 8.0, 4.0, 2.0, 1.0)",
+			"entries_fts_chars JOIN entries e ON e.rowid = entries_fts_chars.rowid")
 		query += " WHERE entries_fts_chars MATCH ?"
 		args = append(args, expr)
 		for _, condition := range conditions {
@@ -132,7 +137,7 @@ func (ix *Index) Search(ctx context.Context, opts SearchOptions) ([]Hit, error) 
 		if err := rows.Scan(
 			&hit.ID, &hit.NodeID, &hit.NodePath, &hit.NodeTitle, &hit.Type, &hit.Status,
 			&hit.Sensitivity, &hit.Title, &hit.Summary, &tags, &hit.SourceAgent,
-			&hit.SourceKind, &hit.CreatedAt, &hit.UpdatedAt, &hit.Path,
+			&hit.SourceKind, &hit.CreatedAt, &hit.UpdatedAt, &hit.Path, &hit.Score,
 		); err != nil {
 			return nil, fmt.Errorf("search index: %w", err)
 		}

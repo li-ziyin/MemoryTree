@@ -76,7 +76,23 @@ type DataReport struct {
 	// from the MCP usage log; cold flags never-returned entries older
 	// than coldAfter. Empty when the repository has no such entries.
 	EntryUsage []EntryUsageStat `json:"entry_usage"`
-	Guidelines string           `json:"guidelines"`
+	// AtticCandidates lists cold entries that are candidates for the attic
+	// pattern: still true, so not deprecated, but quiet long enough that
+	// the active tree reads better without them. Empty when none qualify.
+	AtticCandidates []AtticCandidate `json:"attic_candidates,omitempty"`
+	Guidelines      string           `json:"guidelines"`
+}
+
+// AtticCandidate is one cold entry the attic pattern may want to move: the
+// material stays searchable and retrievable from an attic node while the
+// working tree stays lean. Distinct from deprecation, which is for content
+// that is no longer true.
+type AtticCandidate struct {
+	ID        string `json:"id"`
+	NodePath  string `json:"node_path"`
+	Type      string `json:"type"`
+	Title     string `json:"title"`
+	UpdatedAt string `json:"updated_at"`
 }
 
 // pairJaccardMin is the overlap threshold for a pair signal.
@@ -150,9 +166,29 @@ func Data(root string) (*validate.Result, *DataReport, error) {
 		report.QueryMisses = misses
 	}
 	if usage, err := usagelog.Aggregate(root); err == nil {
-		report.EntryUsage = usageStats(snap, usage, time.Now().UTC())
+		stats := usageStats(snap, usage, time.Now().UTC())
+		report.EntryUsage = stats
+		report.AtticCandidates = atticCandidates(stats)
 	}
 	return res, report, nil
+}
+
+// atticCandidates lifts the cold entries out of the usage stats: cold means
+// never returned and untouched for 90+ days, the exact population the attic
+// pattern exists for. Only active and draft entries reach usageStats, so
+// terminal statuses are already excluded.
+func atticCandidates(stats []EntryUsageStat) []AtticCandidate {
+	var out []AtticCandidate
+	for _, s := range stats {
+		if !s.Cold {
+			continue
+		}
+		out = append(out, AtticCandidate{
+			ID: s.ID, NodePath: s.NodePath, Type: s.Type,
+			Title: s.Title, UpdatedAt: s.UpdatedAt,
+		})
+	}
+	return out
 }
 
 // usageStats joins snapshot entries with their return history. Only active
@@ -254,8 +290,12 @@ Operations (node references are UUIDv7 or slug path; paths resolve against the t
 	- {"op":"archive_node","node":"x","reason":"..."}   (descendants keep their own status)
 	- {"op":"deprecate_entry","entry":"UUID","reason":"..."}   (active/draft -> deprecated, excluded from default retrieval; prefer for cold entries)
 Split = create_node + moves; merge = moves + archive_node. Stay within depth 4 and 8 children per node.
-Entry usage is in entry_usage: returns/last_return per entry; cold means never returned and untouched for 90+ days —
-deprecate_entry is the matching retirement op, and a deprecation without a replacement is fine (spec 12.7).
+Entry usage is in entry_usage: returns/last_return per entry; cold means never returned and untouched for 90+ days.
+Cold entries have two retirement paths — pick by truth, not by silence:
+- attic (still true, just quiet): create_node kind=category slug=attic under the root once, then move_entry each cold entry into it.
+  Attic entries stay active, searchable, and retrievable; the working tree stays lean. This is the default for cold reference material.
+- deprecate_entry (no longer true): active/draft -> deprecated, excluded from default retrieval; a deprecation without a replacement is fine (spec 12.7).
+attic_candidates lists the current cold population for the attic path.
 Rules enforced by memoryd gardener apply: no cycles, no slug conflicts, tags_delta never repeats inherited tags,
 entries only move to active project/global nodes, sensitivity never weakens, root/global cannot move or archive.
 Run "memoryd gardener apply --dry-run" first; a human approves the real apply. Propose only changes the signals justify.`

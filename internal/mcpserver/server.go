@@ -344,6 +344,27 @@ func (s *Server) search(ctx context.Context, opts index.SearchOptions) ([]index.
 	return s.index.Search(ctx, opts)
 }
 
+// usageHeats loads per-entry usage-heat multipliers from the usage log, best
+// effort: no repository root or an unreadable log yields nil and ranking
+// stays purely relevance-based. Loaded per call — the log is small and
+// shared across processes, so a cache would only serve stale heat.
+func (s *Server) usageHeats() map[string]float64 {
+	if s.root == "" {
+		return nil
+	}
+	heats, err := usagelog.Heats(s.root, time.Now())
+	if err != nil {
+		return nil
+	}
+	return heats
+}
+
+// heatOf adapts a heat map into rank.HeatOf; entries without usage history
+// report 0 and rank.Apply clamps that to the neutral multiplier 1.
+func heatOf(heats map[string]float64) func(string) float64 {
+	return func(id string) float64 { return heats[id] }
+}
+
 func (s *Server) nodes(ctx context.Context) ([]index.Node, error) {
 	return s.index.Nodes(ctx)
 }

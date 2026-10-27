@@ -64,4 +64,13 @@ memoryd gardener apply --apply <data-dir> < proposal.json # 4. 应用（人批�
 
 `gardener data` 为每个节点给出：路径、kind、有效标签与 delta、深度、子节点数、条目数、时间戳，以及结构信号 `children>8`、`depth>4`、`empty-project`；并给出同父节点对的有效标签重叠（Jaccard ≥ 0.5）作为 merge/restructure 触发线索，同时汇总 MCP 层的检索失败日志（`query_misses`：持续落空的查询及次数与最近时间）——连续落空是第三类重构触发信号。
 
-`entry_usage` 列出每条 active/draft 条目在 MCP 层的返回历史：`memory_search` / `memory_brief` / `memory_get` 返回过几次（`returns`）、最近一次是什么时候（`last_return`，从未返回则为空），以及 `cold` 标记（从未返回且 90+ 天未动）。冷条目即退役候选——对它们提案 `deprecate_entry`。计数只是 `.index/` 下一次性日志里的派生数据，绝不写入记忆文件。
+`entry_usage` 列出每条 active/draft 条目在 MCP 层的返回历史：`memory_search` / `memory_brief` / `memory_get` 返回过几次（`returns`）、最近一次是什么时候（`last_return`，从未返回则为空），以及 `cold` 标记（从未返回且 90+ 天未动）。计数只是 `.index/` 下一次性日志里的派生数据，绝不写入记忆文件。
+
+### 冷条目的 attic 模式
+
+冷意味着「安静」，不意味着「错」——按内容真伪选退休路径，而不是按沉默：
+
+- **attic（仍然真、只是安静）**——冷参考材料的默认路径。根下一次性建 `category` 节点 `attic`（`create_node`），再把每条冷条目 `move_entry` 进去。attic 里的条目保持 active、可搜索、可检索（FTS 不关心条目住哪）；工作树只是读起来更精炼。数据包的 `attic_candidates` 就是为此列出的当前冷条目清单。
+- **`deprecate_entry`（不再真）**——内容已被现实淘汰时使用。deprecated 条目退出默认检索；无替代的退役也成立（规范 12.7）。
+
+两条路径都由既有原语组合——没有 attic 专用 apply 规则；深度/分支限制与其他不变量照常生效。一个提案可以混用（真的进 attic、错的退役），一次提交完成。

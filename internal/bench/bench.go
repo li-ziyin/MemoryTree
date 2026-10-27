@@ -11,6 +11,7 @@ import (
 	"strings"
 
 	"github.com/li-ziyin/memorytree/internal/index"
+	"github.com/li-ziyin/memorytree/internal/rank"
 	"github.com/li-ziyin/memorytree/internal/tokens"
 )
 
@@ -33,8 +34,11 @@ type Result struct {
 	TopTitle string `json:"top_title"`
 }
 
-// Run executes all questions and returns their results in order.
-func Run(dataDir string, questions []Question) ([]Result, error) {
+// Run executes all questions and returns their results in order. A non-nil
+// heat re-ranks every result set exactly the way the MCP server does, so
+// the regression gate can exercise production ranking against the real
+// usage log (memoryd bench --usage) or synthetic bursts in tests.
+func Run(dataDir string, questions []Question, heat rank.HeatOf) ([]Result, error) {
 	ix, err := index.Open(dataDir)
 	if err != nil {
 		return nil, err
@@ -49,6 +53,9 @@ func Run(dataDir string, questions []Question) ([]Result, error) {
 		hits, err := ix.Search(context.Background(), index.SearchOptions{Query: q.Query, Limit: limit})
 		if err != nil {
 			return nil, fmt.Errorf("question %d: %w", q.ID, err)
+		}
+		if heat != nil {
+			hits = rank.Apply(hits, heat)
 		}
 		rank := 0
 		topID, topTitle := "", ""

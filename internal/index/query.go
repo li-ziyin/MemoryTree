@@ -67,6 +67,39 @@ type EntryCount struct {
 	Active int `json:"active"`
 }
 
+// EntryOwner pairs one entry with its host node, for aggregating per-entry
+// signals (such as usage heat) up to nodes.
+type EntryOwner struct {
+	EntryID string
+	NodeID  string
+	Status  string
+}
+
+// EntryOwners lists every entry's host node and status.
+func (ix *Index) EntryOwners(ctx context.Context) ([]EntryOwner, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	rows, err := ix.db.QueryContext(ctx, `SELECT id, node_id, status FROM entries ORDER BY id`)
+	if err != nil {
+		return nil, fmt.Errorf("list entry owners: %w", err)
+	}
+	defer rows.Close()
+
+	owners := make([]EntryOwner, 0, 128)
+	for rows.Next() {
+		var o EntryOwner
+		if err := rows.Scan(&o.EntryID, &o.NodeID, &o.Status); err != nil {
+			return nil, fmt.Errorf("list entry owners: %w", err)
+		}
+		owners = append(owners, o)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("list entry owners: %w", err)
+	}
+	return owners, nil
+}
+
 // Nodes returns every node ordered by slug path.
 func (ix *Index) Nodes(ctx context.Context) ([]Node, error) {
 	if ctx == nil {

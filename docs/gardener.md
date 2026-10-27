@@ -62,4 +62,13 @@ memoryd gardener apply --apply <data-dir> < proposal.json # 4. apply (after huma
 
 `gardener data` reports, per node: path, kind, effective tags and deltas, depth, child count, entry count, timestamps, plus the structural signals `children>8`, `depth>4`, and `empty-project`; it also reports effective-tag overlap between same-parent node pairs (Jaccard ≥ 0.5) as merge/restructure triggers, and aggregates the MCP layer's retrieval-miss log (`query_misses`: the queries that kept finding nothing, with counts and last-seen times) — repeated misses are the third restructuring trigger.
 
-`entry_usage` lists every active and draft entry with its return history from the MCP layer: how often `memory_search` / `memory_brief` / `memory_get` returned it (`returns`), when that last happened (`last_return`, empty when never), and a `cold` flag for entries never returned and untouched for 90+ days. Cold entries are the deprecation candidates — propose `deprecate_entry` for them. The counts are derived data living only in the disposable `.index/` log; they never appear in the memory files.
+`entry_usage` lists every active and draft entry with its return history from the MCP layer: how often `memory_search` / `memory_brief` / `memory_get` returned it (`returns`), when that last happened (`last_return`, empty when never), and a `cold` flag for entries never returned and untouched for 90+ days. The counts are derived data living only in the disposable `.index/` log; they never appear in the memory files.
+
+### The attic pattern for cold entries
+
+Cold means *quiet*, not *wrong* — pick the retirement path by truth, not by silence:
+
+- **Attic (still true, just quiet)** — the default for cold reference material. Create a `category` node `attic` under the root once (`create_node`), then `move_entry` each cold entry into it. Attic entries stay active, searchable, and retrievable (the FTS index does not care where an entry lives); the working tree just reads lean. `attic_candidates` in the data package lists the current cold population for exactly this proposal.
+- **`deprecate_entry` (no longer true)** — for content superseded by reality. Deprecated entries drop out of default retrieval; a deprecation without a replacement is fine (spec 12.7).
+
+Both paths compose from existing primitives — there is no attic-specific apply rule; depth/branching limits and all other invariants apply as usual. A proposal may mix both (attic the still-true half, deprecate the stale half) in one commit.

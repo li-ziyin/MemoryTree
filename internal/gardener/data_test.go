@@ -145,6 +145,15 @@ func TestDataIncludesEntryUsage(t *testing.T) {
 	if sse.Returns != 0 || sse.LastReturn != "" || !sse.Cold {
 		t.Errorf("cold sse usage = %+v", sse)
 	}
+	// The attic pattern lifts exactly the cold population: the aged sse
+	// entry is a candidate, the freshly returned user entry is not.
+	if len(report.AtticCandidates) != 1 {
+		t.Fatalf("attic candidates = %+v, want exactly the cold entry", report.AtticCandidates)
+	}
+	cand := report.AtticCandidates[0]
+	if cand.ID != sseEntry.ID || cand.NodePath != "work/agentflow" || cand.Title != sse.Title {
+		t.Errorf("attic candidate = %+v", cand)
+	}
 	// The counts are derived data: the memory files stay untouched by them.
 	if strings.Contains(aged, "returns") {
 		t.Errorf("usage counts leaked into the memory file")
