@@ -7,6 +7,7 @@ Documents are English-first; `*.zh-CN.md` files are synced Chinese versions (the
 - [MCP API](mcp-api.md) — tool reference for MCP clients
 - [Migration guide](migration.md) — format versioning and migrations
 - [Gardener workflow](gardener.md) — tree-maintenance proposal format, rule codes, and safety contract（[中文](gardener.zh-CN.md)）
+- [Client integration](clients.md) — wiring Qoder / ZCode / OpenCode to `memoryd mcp`
 - [M1 acceptance](m1-acceptance.md)
 - [M2 acceptance](m2-acceptance.md) — write-path concurrency, crash, and supersede results (2026-10-27)
 - [M3 acceptance](m3-acceptance.md) — mount suggestion and gardener results (2026-10-27)
@@ -17,5 +18,4 @@ Documents are English-first; `*.zh-CN.md` files are synced Chinese versions (the
 Documents planned before the first public release:
 
 - Threat model (expanded from [SECURITY.md](../SECURITY.md))
-- Client integration guides (ZCode, OpenCode, Qoder)
 - Release verification guide

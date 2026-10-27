@@ -2,7 +2,7 @@
 
 Local-first, file-based memory for AI agents: a self-organizing tree of Markdown memories shared across ZCode, OpenCode, Qoder, and any MCP-capable client.
 
-> **Status: M3 complete.** Everything from M1/M2 (v1 format, validator, init, legacy import, disposable SQLite FTS5 index, read-only MCP server, write gateway `memory_add` / `memory_supersede`, `memoryd inbox` capture) plus insertion placement and the gardener: `memory_suggest_mount` over MCP and CLI, `memoryd gardener data/apply` with six primitives, rule-code validation, dry-run by default, rollback, and a single git commit per proposal. The approved restructure of the live repository landed as one `gardener:` commit (bench 21/21), and `memoryd doctor` finishes the crash-recovery story (detect uncommitted writes, recover with one commit, never discard data). Release hardening landed the same day: lint and vulnerability gates in CI and locally, the race detector, a dependency allowlist, and a GoReleaser pipeline with checksums, SBOMs, and signatures. Next: English docs, a real-client integration pass, and the first tagged release once the module path is finalized.
+> **Status: M3 complete.** Everything from M1/M2 (v1 format, validator, init, legacy import, disposable SQLite FTS5 index, read-only MCP server, write gateway `memory_add` / `memory_supersede`, `memoryd inbox` capture) plus insertion placement and the gardener: `memory_suggest_mount` over MCP and CLI, `memoryd gardener data/apply` with six primitives, rule-code validation, dry-run by default, rollback, and a single git commit per proposal. The approved restructure of the live repository landed as one `gardener:` commit (bench 21/21), and `memoryd doctor` finishes the crash-recovery story (detect uncommitted writes, recover with one commit, never discard data). Release hardening landed the same day: lint and vulnerability gates in CI and locally, the race detector, a dependency allowlist, and a GoReleaser pipeline with checksums, SBOMs, and signatures. English-first documentation covers the design, format spec, MCP API, migration, and client integration. The remaining V1 promises closed on 2026-10-27: credential redaction on every capture and write, a persisted retrieval-miss log feeding the gardener, and sensitivity-filtered export; the MCP server is verified end-to-end over stdio against the live repository. Next: hook a real client (Qoder or ZCode — see the [client guide](docs/clients.md)) and the first tagged release once the module path is finalized.
 
 ## Why
 
@@ -81,6 +81,10 @@ echo "raw notes..." | ./bin/memoryd inbox ~/.memorytree --source zcode
 ./bin/memoryd doctor ~/.memorytree
 ./bin/memoryd doctor --fix ~/.memorytree
 
+# Copy a sensitivity-filtered share view (default level: internal, i.e. no
+# private entries); the copy is for sharing, not a validatable repository
+./bin/memoryd export --level public --out ~/memory-share ~/.memorytree
+
 # Rerun retrieval questions and fail when a gold entry is not the first hit
 ./bin/memoryd bench ~/.memorytree bench-questions.jsonl
 ```
@@ -132,6 +136,7 @@ English-first; `*.zh-CN.md` files are synced Chinese versions.
 - [Memory format v1](spec/memory-format-v1.md)（[中文](spec/memory-format-v1.zh-CN.md)）
 - [MCP API reference](docs/mcp-api.md)
 - [Migration guide](docs/migration.md)
+- [Client integration guide](docs/clients.md) — Qoder, ZCode, OpenCode
 - [Gardener workflow](docs/gardener.md)（[中文](docs/gardener.zh-CN.md)）
 - [All documentation](docs/README.md) — acceptance records, performance baseline, capture flow
 - [Contributing](CONTRIBUTING.md)

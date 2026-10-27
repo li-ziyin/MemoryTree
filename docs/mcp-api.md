@@ -41,7 +41,7 @@ A fixed-token-budget context brief assembled deterministically (no generation): 
 
 ### memory_search
 
-Full-text search (FTS5 trigram; short CJK terms go through a rune-split index) with filters. Returns summaries, IDs, node paths, and status — never full bodies.
+Full-text search (FTS5 trigram; short CJK terms go through a rune-split index) with filters. Returns summaries, IDs, node paths, and status — never full bodies. A search that finds nothing for a non-empty query is logged to `.index/search-misses.jsonl` (once per query per session); the gardener aggregates those misses as restructuring signals.
 
 | Parameter | Type | Required | Notes |
 |---|---|---|---|
@@ -84,7 +84,7 @@ Each candidate carries its score, matched tags, matched tokens, and a rationale,
 
 ### memory_add *(write)*
 
-Write one new entry: rule-code validation, atomic write, git commit, index refresh — all under the single-writer lock. The entry is searchable in the same session.
+Write one new entry: rule-code validation, credential redaction, atomic write, git commit, index refresh — all under the single-writer lock. The entry is searchable in the same session. Common secret formats (cloud access keys, platform tokens, private-key blocks, `password:`-style fields) in the title, summary, or body are replaced with `[REDACTED]` before anything touches disk; the response reports the count and never the originals.
 
 | Parameter | Type | Required | Notes |
 |---|---|---|---|
@@ -120,4 +120,4 @@ Reads are concurrent (SQLite WAL). Writes serialize on a cross-process file lock
 
 ## CLI equivalents
 
-`memoryd suggest-mount`, `add`, and `supersede` mirror the write tools for shell use; see the [README](../README.md) quick start.
+`memoryd suggest-mount`, `add`, and `supersede` mirror the write tools for shell use; `memoryd export` writes a sensitivity-filtered share view; see the [README](../README.md) quick start and the [client integration guide](clients.md).

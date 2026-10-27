@@ -57,4 +57,4 @@ memoryd gardener apply --apply <data-dir> < proposal.json # 4. apply (after huma
 
 ## Package signals
 
-`gardener data` reports, per node: path, kind, effective tags and deltas, depth, child count, entry count, timestamps, plus the structural signals `children>8`, `depth>4`, and `empty-project`; it also reports effective-tag overlap between same-parent node pairs (Jaccard ≥ 0.5) as merge/restructure triggers. Retrieval-failure logs are not persisted in V1; the MCP layer may record them later.
+`gardener data` reports, per node: path, kind, effective tags and deltas, depth, child count, entry count, timestamps, plus the structural signals `children>8`, `depth>4`, and `empty-project`; it also reports effective-tag overlap between same-parent node pairs (Jaccard ≥ 0.5) as merge/restructure triggers, and aggregates the MCP layer's retrieval-miss log (`query_misses`: the queries that kept finding nothing, with counts and last-seen times) — repeated misses are the third restructuring trigger.

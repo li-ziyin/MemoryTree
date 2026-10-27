@@ -59,4 +59,4 @@ memoryd gardener apply --apply <data-dir> < proposal.json # 4. 应用（人批�
 
 ## 数据包信号
 
-`gardener data` 为每个节点给出：路径、kind、有效标签与 delta、深度、子节点数、条目数、时间戳，以及结构信号 `children>8`、`depth>4`、`empty-project`；并给出同父节点对的有效标签重叠（Jaccard ≥ 0.5）作为 merge/restructure 触发线索。检索失败日志 V1 暂未落盘，后续可由 MCP 层记录。
+`gardener data` 为每个节点给出：路径、kind、有效标签与 delta、深度、子节点数、条目数、时间戳，以及结构信号 `children>8`、`depth>4`、`empty-project`；并给出同父节点对的有效标签重叠（Jaccard ≥ 0.5）作为 merge/restructure 触发线索，同时汇总 MCP 层的检索失败日志（`query_misses`：持续落空的查询及次数与最近时间）——连续落空是第三类重构触发信号。
