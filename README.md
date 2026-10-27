@@ -2,7 +2,7 @@
 
 Local-first, file-based memory for AI agents: a self-organizing tree of Markdown memories shared across ZCode, OpenCode, Qoder, and any MCP-capable client.
 
-> **Status: M3 complete.** Everything from M1/M2 (v1 format, validator, init, legacy import, disposable SQLite FTS5 index, read-only MCP server, write gateway `memory_add` / `memory_supersede`, `memoryd inbox` capture) plus insertion placement and the gardener: `memory_suggest_mount` over MCP and CLI, `memoryd gardener data/apply` with six primitives, rule-code validation, dry-run by default, rollback, and a single git commit per proposal. The approved restructure of the live repository landed as one `gardener:` commit (bench 21/21), and `memoryd doctor` finishes the crash-recovery story (detect uncommitted writes, recover with one commit, never discard data). Next: release hardening.
+> **Status: M3 complete.** Everything from M1/M2 (v1 format, validator, init, legacy import, disposable SQLite FTS5 index, read-only MCP server, write gateway `memory_add` / `memory_supersede`, `memoryd inbox` capture) plus insertion placement and the gardener: `memory_suggest_mount` over MCP and CLI, `memoryd gardener data/apply` with six primitives, rule-code validation, dry-run by default, rollback, and a single git commit per proposal. The approved restructure of the live repository landed as one `gardener:` commit (bench 21/21), and `memoryd doctor` finishes the crash-recovery story (detect uncommitted writes, recover with one commit, never discard data). Release hardening landed the same day: lint and vulnerability gates in CI and locally, the race detector, a dependency allowlist, and a GoReleaser pipeline with checksums, SBOMs, and signatures. Next: English docs, a real-client integration pass, and the first tagged release once the module path is finalized.
 
 ## Why
 
@@ -41,7 +41,7 @@ MemoryTree separates the shared memory layer from each agent's native memory:
 
 ## Quick start
 
-Requires Go 1.25 or newer and Git 2.30+ (Git is not used by `validate`, `index`, or `mcp` yet).
+Requires Go 1.26 or newer (see the `go` directive in `go.mod`) and Git 2.30+ (Git is not used by `validate`, `index`, or `mcp` yet).
 
 ```sh
 go build -o bin/memoryd ./cmd/memoryd
@@ -136,7 +136,11 @@ The user data repository is separate. The default is `~/.memorytree`; it can be 
 - **M0** — complete: format spec, JSON Schemas, Go skeleton, validator, legacy import
 - **M1** — feature-complete and benchmarked: FTS5 trigram index (fingerprint, generation, `--rebuild`), the read-only MCP server (`brief/search/get/tree`), and the 20-question benchmark against `MEMORY.md` + grep. Rerun on 2026-10-25 after short-query ranking and excerpt retrieval: 20/20 complete and first-hit answers, 14,723 vs 67,796 tokens per task, near parity when `MEMORY.md` is amortized. Engineering hardening landed on 2026-10-26: cross-platform CI with a schema consistency job, direct parser tests and fuzz seeds, a scale baseline ([docs/perf-baseline.md](docs/perf-baseline.md)), the `memoryd bench` retrieval regression gate, a rune-split FTS index for short CJK queries (schema v2), and stale-index warnings with request deadlines in the MCP server
 - **M2** — complete (2026-10-27): write gateway `memory_add`/`memory_supersede` over MCP and CLI (rule-code validation, atomic writes, single-writer lock with crash recovery, git commits, index refresh), `memoryd inbox` capture with the distillation prompt, the three newer memories imported, concurrency and crash tests — acceptance in [docs/m2-acceptance.md](docs/m2-acceptance.md)
-- **M3** — complete (2026-10-27): insertion placement (`memory_suggest_mount`, leave-one-out top-1 97.5% / top-3 100% at 40 entries) and the gardener (`gardener data/apply`, six primitives, 17 G- rule codes, dry-run by default, rollback, one commit per proposal) — acceptance in [docs/m3-acceptance.md](docs/m3-acceptance.md). The user-approved restructure of the live repository is applied. Release hardening remains, together with the 100-entry placement re-test once the corpus grows
+- **M3** — complete (2026-10-27): insertion placement (`memory_suggest_mount`, leave-one-out top-1 97.5% / top-3 100% at 40 entries) and the gardener (`gardener data/apply`, six primitives, 17 G- rule codes, dry-run by default, rollback, one commit per proposal) — acceptance in [docs/m3-acceptance.md](docs/m3-acceptance.md). The user-approved restructure of the live repository is applied. Release hardening: golangci-lint and govulncheck gates (`.golangci.yml`, `scripts/check.sh`, CI), `go test -race` in CI, the dependency allowlist (`internal/depcheck`, keeps `go.mod` in lockstep with `THIRD_PARTY_NOTICES.md`), and the GoReleaser pipeline (`.goreleaser.yaml` + `release.yml`: cross-platform archives with license files, SHA-256 checksums, SPDX SBOMs, keyless cosign signatures, draft releases). Remaining: the 100-entry placement re-test once the corpus grows
+
+## Releases
+
+Pushing a `v*` tag runs [.github/workflows/release.yml](.github/workflows/release.yml): tests must pass, GoReleaser builds `memoryd` for Linux/macOS/Windows on amd64/arm64 (pure Go, `CGO_ENABLED=0`), packs zip/tar.gz archives with `LICENSE`, `NOTICE`, and `THIRD_PARTY_NOTICES.md`, writes SHA-256 checksums, the workflow attaches SPDX SBOMs (syft) and a keyless cosign signature of the checksums, and opens a **draft** GitHub release for review. `workflow_dispatch` runs the same pipeline as a snapshot without tagging. The dependency inventory behind every archive is enforced by `internal/depcheck`, so no module enters a build without a recorded license.
 
 ## Deliberately deferred
 

@@ -1,0 +1,66 @@
+# GoReleaser v2 configuration.
+# Cut a release with: git tag vX.Y.Z && git push --tags
+# (CI then runs .github/workflows/release.yml: test, build archives with
+# license files, checksums, SPDX SBOMs via syft, and keyless cosign
+# signatures. The GitHub release is created as a draft for human review.)
+version: 2
+
+project_name: memoryd
+
+before:
+  hooks:
+    - go mod tidy
+
+builds:
+  - id: memoryd
+    main: ./cmd/memoryd
+    binary: memoryd
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - linux
+      - darwin
+      - windows
+    goarch:
+      - amd64
+      - arm64
+    flags:
+      - -trimpath
+    ldflags:
+      - -s -w
+      - -X main.version={{ .Version }}
+      - -X main.commit={{ .Commit }}
+      - -X main.date={{ .Date }}
+
+archives:
+  - id: memoryd
+    ids:
+      - memoryd
+    name_template: >-
+      {{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}
+    formats:
+      - tar.gz
+    format_overrides:
+      - goos: windows
+        formats:
+          - zip
+    files:
+      - LICENSE
+      - NOTICE
+      - THIRD_PARTY_NOTICES.md
+      - README.md
+
+checksum:
+  name_template: checksums.txt
+  algorithm: sha256
+
+changelog:
+  disable: true # hand-written notes per release; see docs and DESIGN §9
+
+snapshot:
+  version_template: "{{ incpatch .Version }}-next"
+
+release:
+  draft: true
+  prerelease: auto
+  mode: keep-existing

@@ -1,0 +1,82 @@
+name: Release
+
+# Cutting a release: push a tag (git tag vX.Y.Z && git push --tags).
+# GoReleaser builds cross-platform archives with the license files, writes
+# checksums, and creates a DRAFT GitHub release. The workflow then attaches
+# SPDX SBOMs (syft) and keyless cosign signatures for the checksums file;
+# a human reviews and publishes the draft.
+# workflow_dispatch runs the same pipeline as a snapshot without tagging.
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  id-token: write # cosign keyless signing
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Tests must pass before anything is shipped
+        run: |
+          go vet ./...
+          go test ./...
+
+      - uses: goreleaser/goreleaser-action@v6
+        with:
+          version: latest
+          args: >-
+            release --clean
+            ${{ github.event_name == 'workflow_dispatch' && '--snapshot' || '' }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Generate SPDX SBOMs for every archive
+        run: |
+          curl -sSfL https://raw.githubusercontent.com/anchore/syft/main/install.sh \
+            | sh -s -- -b /usr/local/bin
+          mkdir -p dist/sbom
+          syft dir:. -o spdx-json -o dist/sbom/memorytree-source.spdx.json
+          for f in dist/memoryd_*.tar.gz dist/memoryd_*.zip; do
+            syft "$f" -o spdx-json > "dist/sbom/$(basename "$f").spdx.json"
+          done
+
+      - name: Sign the checksums file (keyless cosign)
+        uses: sigstore/cosign-installer@v3
+
+      - run: |
+          cosign sign-blob --yes \
+            --output-signature dist/checksums.txt.sig \
+            --output-certificate dist/checksums.txt.pem \
+            dist/checksums.txt
+
+      - name: Attach SBOMs and signatures (tag releases)
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          draft: true
+          files: |
+            dist/sbom/*
+
+      - name: Upload everything as workflow artifacts (snapshots)
+        if: github.event_name == 'workflow_dispatch'
+        uses: actions/upload-artifact@v4
+        with:
+          name: memoryd-snapshot
+          path: |
+            dist/*.tar.gz
+            dist/*.zip
+            dist/checksums*
+            dist/sbom/*
