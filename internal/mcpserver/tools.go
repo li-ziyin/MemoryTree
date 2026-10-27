@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"os"
 	"path"
 	"strings"
 	"time"
@@ -17,6 +18,7 @@ import (
 	"github.com/li-ziyin/memorytree/internal/misslog"
 	"github.com/li-ziyin/memorytree/internal/model"
 	"github.com/li-ziyin/memorytree/internal/mount"
+	"github.com/li-ziyin/memorytree/internal/projects"
 	"github.com/li-ziyin/memorytree/internal/store"
 )
 
@@ -52,6 +54,10 @@ func toolDefinitions() []toolDefinition {
 				"project": map[string]any{
 					"type":        "string",
 					"description": `Optional project node ID or slug path, for example "work/agentflow".`,
+				},
+				"cwd": map[string]any{
+					"type":        "string",
+					"description": "Optional working directory of the calling agent. When project is omitted, it is matched against projects.yaml in the data repository to resolve the project.",
 				},
 				"budget_tokens": map[string]any{
 					"type":        "integer",
@@ -247,6 +253,7 @@ func enumArray(values []string, description string, maxItems int) map[string]any
 type briefArgs struct {
 	Task         string `json:"task"`
 	Project      string `json:"project"`
+	Cwd          string `json:"cwd"`
 	BudgetTokens int    `json:"budget_tokens"`
 }
 
@@ -333,13 +340,28 @@ func (s *Server) memoryBrief(ctx context.Context, raw json.RawMessage) (*Envelop
 	}
 
 	var project *index.Node
-	if ref := strings.TrimSpace(args.Project); ref != "" {
+	ref := strings.TrimSpace(args.Project)
+	source := "project argument"
+	if ref == "" {
+		if env := strings.TrimSpace(os.Getenv("MEMORYTREE_PROJECT")); env != "" {
+			ref, source = env, "MEMORYTREE_PROJECT"
+		} else if cwd := strings.TrimSpace(args.Cwd); cwd != "" {
+			if s.root == "" {
+				warnings = append(warnings, "cwd project resolution is unavailable without a repository root")
+			} else if m, err := projects.Load(s.root); err != nil {
+				warnings = append(warnings, fmt.Sprintf("projects.yaml is invalid (%v); cwd project resolution is disabled", err))
+			} else if node, ok := m.Match(cwd); ok {
+				ref, source = node, "projects.yaml"
+			}
+		}
+	}
+	if ref != "" {
 		var ok bool
 		project, ok = findNode(nodes, ref)
 		if !ok {
 			return nil, &ToolError{
 				Code:       "NODE_NOT_FOUND",
-				Message:    fmt.Sprintf("no node matches project %q", ref),
+				Message:    fmt.Sprintf("no node matches project %q (from %s)", ref, source),
 				Suggestion: "Call memory_tree to list node IDs and slug paths.",
 			}
 		}
@@ -358,7 +380,7 @@ func (s *Server) memoryBrief(ctx context.Context, raw json.RawMessage) (*Envelop
 			Trust:            trustUntrusted,
 		}
 	} else {
-		warnings = append(warnings, "no project was specified; the project overview and project updates are empty")
+		warnings = append(warnings, "no project was specified and no mapping matched; pass project or cwd, set MEMORYTREE_PROJECT, or add the path to projects.yaml in the data repository — the project overview and project updates are empty")
 	}
 
 	var userHits, updateHits, relatedHits, pendingHits []index.Hit

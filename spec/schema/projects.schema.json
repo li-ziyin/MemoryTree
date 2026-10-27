@@ -1,0 +1,37 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:memorytree:schema:v1:projects",
+  "title": "MemoryTree working-directory to project map (projects.yaml)",
+  "description": "Validates the parsed YAML object of projects.yaml, the optional repository-level map that resolves a calling agent's working directory to a project node for memory_brief. Format version 1.",
+  "type": "object",
+  "required": ["schema", "projects"],
+  "properties": {
+    "schema": {
+      "const": "memorytree.projects/v1"
+    },
+    "projects": {
+      "type": "array",
+      "maxItems": 200,
+      "items": {
+        "type": "object",
+        "required": ["path", "node"],
+        "properties": {
+          "path": {
+            "type": "string",
+            "minLength": 2,
+            "maxLength": 1024,
+            "description": "Absolute path, or a path starting with ~, of a working directory. Matched by longest prefix; case-insensitive on Windows."
+          },
+          "node": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 512,
+            "description": "Project node reference: slug path or UUIDv7."
+          }
+        },
+        "additionalProperties": false
+      }
+    }
+  },
+  "additionalProperties": false
+}

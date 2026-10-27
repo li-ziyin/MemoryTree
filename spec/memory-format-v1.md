@@ -169,6 +169,25 @@ default_sensitivity: private
 
 Unknown fields MUST be preserved.
 
+### 6.1 Optional working-directory map `projects.yaml`
+
+Location: the repository root; optional. Encoding UTF-8, line endings LF. Maps a calling agent's working directory to a project node so `memory_brief` can resolve the project when the caller passes `cwd` instead of a node reference. Matched by longest path prefix; comparison is case-insensitive on Windows, `~` expands to the user's home directory. Schema: [projects.schema.json](schema/projects.schema.json); validated when loaded, never by `memoryd validate`.
+
+```yaml
+schema: memorytree.projects/v1
+projects:
+  - path: ~/work/agentflow
+    node: work/agentflow
+  - path: E:\MemoryTree
+    node: projects/memorytree
+```
+
+| Field | Type | Required | Notes |
+|---|---|---|---|
+| `schema` | string | yes | fixed, `memorytree.projects/v1` |
+| `projects[].path` | string | yes | absolute or `~`-prefixed working directory |
+| `projects[].node` | string | yes | project node slug path or UUIDv7 |
+
 ## 7. Node file `node.md`
 
 One `node.md` per node directory: YAML frontmatter plus an optional Markdown body.
