@@ -79,12 +79,13 @@ func acquireWriteLock(root string) (*writeLock, error) {
 }
 
 // isWindowsSharingViolation recognises ERROR_SHARING_VIOLATION (32) and
-// ERROR_ACCESS_DENIED races from concurrent exclusive creates; Go's syscall
-// package does not export the sharing-violation constant.
+// ERROR_ACCESS_DENIED (5) races from concurrent exclusive creates. The
+// values are spelled out because syscall only exports them on Windows,
+// and this file must compile on every platform.
 func isWindowsSharingViolation(err error) bool {
 	var errno syscall.Errno
 	if errors.As(err, &errno) {
-		return errno == 32 || errno == syscall.ERROR_ACCESS_DENIED
+		return errno == 32 || errno == 5
 	}
 	return false
 }
