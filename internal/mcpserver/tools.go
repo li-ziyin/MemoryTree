@@ -1018,7 +1018,7 @@ func (s *Server) afterWrite() {
 	if meta, err := s.index.Meta(); err == nil {
 		s.generation = meta.Generation
 		s.fingerprint = meta.Fingerprint
-		s.staleWarned = false
+		s.clearStaleWarning()
 	}
 }
 

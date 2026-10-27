@@ -44,14 +44,15 @@ type Options struct {
 
 // Server serves a read-only index over stdio.
 type Server struct {
-	index       *index.Index
-	version     string
-	generation  int64
-	warnings    []string
-	root        string
-	fingerprint string
-	lastCheck   time.Time
-	staleWarned bool
+	index        *index.Index
+	version      string
+	generation   int64
+	warnings     []string
+	baseWarnings []string
+	root         string
+	fingerprint  string
+	lastCheck    time.Time
+	staleWarning string
 	// missLogged deduplicates retrieval-miss recording per query for this
 	// session, so a client retry loop cannot flood the log.
 	missLogged map[string]bool
@@ -67,16 +68,18 @@ func New(ix *index.Index, opts Options) (*Server, error) {
 	if version == "" {
 		version = "dev"
 	}
-	return &Server{
-		index:       ix,
-		version:     version,
-		generation:  meta.Generation,
-		warnings:    append([]string(nil), opts.Warnings...),
-		root:        opts.Root,
-		fingerprint: meta.Fingerprint,
-		lastCheck:   time.Now(),
-		missLogged:  map[string]bool{},
-	}, nil
+	srv := &Server{
+		index:        ix,
+		version:      version,
+		generation:   meta.Generation,
+		baseWarnings: append([]string(nil), opts.Warnings...),
+		warnings:     append([]string(nil), opts.Warnings...),
+		root:         opts.Root,
+		fingerprint:  meta.Fingerprint,
+		lastCheck:    time.Now(),
+		missLogged:   map[string]bool{},
+	}
+	return srv, nil
 }
 
 // Serve reads JSON-RPC messages until EOF. Protocol and tool errors are
@@ -198,27 +201,54 @@ func (s *Server) dispatch(ctx context.Context, req request) (any, *rpcError) {
 }
 
 // refreshStaleness re-reads the source repository at most once per
-// staleCheckInterval and records one warning when it no longer matches the
-// index the server started from. Serve is single-goroutine; no locking.
+// staleCheckInterval. In the multi-process setup every memoryd shares one
+// index file: an index another process already refreshed is adopted silently
+// (queries serve it through the shared SQLite file), and sources no process
+// indexed — hand edits — are rebuilt here. Only unrecoverable drift warns.
+// Serve is single-goroutine; no locking.
 func (s *Server) refreshStaleness(now time.Time) {
-	if s.root == "" || s.staleWarned || now.Sub(s.lastCheck) < staleCheckInterval {
+	if s.root == "" || now.Sub(s.lastCheck) < staleCheckInterval {
 		return
 	}
 	s.lastCheck = now
+
+	// Adopt an index another process refreshed.
+	if meta, err := s.index.Meta(); err == nil &&
+		(meta.Generation != s.generation || meta.Fingerprint != s.fingerprint) {
+		s.generation = meta.Generation
+		s.fingerprint = meta.Fingerprint
+		s.clearStaleWarning()
+	}
+
 	res, snap, err := validate.ValidateWithSnapshot(s.root)
-	var warning string
 	switch {
 	case err != nil:
-		warning = fmt.Sprintf("repository cannot be re-read (%v); results are from the startup snapshot", err)
+		s.setStaleWarning(fmt.Sprintf("repository cannot be re-read (%v); results are from the last good index", err))
 	case snap == nil:
-		warning = fmt.Sprintf("repository has validation errors (%d); results are from the startup snapshot", res.Errors())
+		s.setStaleWarning(fmt.Sprintf("repository has validation errors (%d); results are from the last good index", res.Errors()))
 	case snap.Fingerprint != s.fingerprint:
-		warning = "source files changed since the index was built; restart memoryd mcp to serve current data"
+		if _, err := index.Build(s.root, index.BuildOptions{}); err != nil {
+			s.setStaleWarning(fmt.Sprintf("source files changed and the index could not be refreshed (%v); results are from the last good index", err))
+			return
+		}
+		if meta, err := s.index.Meta(); err == nil {
+			s.generation = meta.Generation
+			s.fingerprint = meta.Fingerprint
+		}
+		s.clearStaleWarning()
 	default:
-		return
+		s.clearStaleWarning()
 	}
-	s.warnings = append(s.warnings, warning)
-	s.staleWarned = true
+}
+
+func (s *Server) setStaleWarning(msg string) {
+	s.staleWarning = msg
+	s.warnings = append(append([]string(nil), s.baseWarnings...), msg)
+}
+
+func (s *Server) clearStaleWarning() {
+	s.staleWarning = ""
+	s.warnings = append([]string(nil), s.baseWarnings...)
 }
 
 type initializeParams struct {
