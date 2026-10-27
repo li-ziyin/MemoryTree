@@ -242,3 +242,139 @@ func TestUnknownClientErrors(t *testing.T) {
 		t.Fatal("unknown client must error")
 	}
 }
+
+// The session-end capture hook merges into config.json idempotently:
+// enabling configuration-file hooks, adding exactly one Stop entry, and
+// removing cleanly while leaving foreign hooks alone.
+func TestZCodeHookInstallAndRemove(t *testing.T) {
+	home := t.TempDir()
+	cfgDir := filepath.Join(home, ".zcode", "cli")
+	if err := os.MkdirAll(cfgDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(cfgDir, "config.json")
+	foreign := `{"mcp":{"servers":{"other":{"command":"y"}}},"hooks":{"enabled":true,"events":{"Stop":[{"hooks":[{"type":"command","command":"notify-send done"}]}]}}}`
+	if err := os.WriteFile(path, []byte(foreign), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := InstallHooks(home, "zcode", exe, data); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := InstallHooks(home, "zcode", exe, data); err != nil {
+		t.Fatal(err) // idempotent
+	}
+	m := readJSON(t, path)
+	hooks := dig(t, m, "hooks")
+	if hooks["enabled"] != true {
+		t.Fatalf("hooks.enabled = %v, want true", hooks["enabled"])
+	}
+	stop := hooks["events"].(map[string]any)["Stop"].([]any)
+	if len(stop) != 2 {
+		t.Fatalf("Stop groups = %d, want 2 (foreign + ours)", len(stop))
+	}
+	captures := 0
+	for _, g := range stop {
+		for _, e := range g.(map[string]any)["hooks"].([]any) {
+			entry := e.(map[string]any)
+			args, _ := entry["args"].([]any)
+			if len(args) > 0 && args[0] == "capture-session" {
+				captures++
+				if entry["type"] != "process" || entry["command"] != exe {
+					t.Fatalf("capture entry = %v", entry)
+				}
+			}
+		}
+	}
+	if captures != 1 {
+		t.Fatalf("capture entries = %d, want 1 after double install", captures)
+	}
+	if _, ok := dig(t, m, "mcp", "servers")["other"]; !ok {
+		t.Fatal("mcp section damaged by hook install")
+	}
+
+	_, removed, err := RemoveHooks(home, "zcode")
+	if err != nil || !removed {
+		t.Fatalf("remove: %v removed=%v", err, removed)
+	}
+	m = readJSON(t, path)
+	stop = dig(t, m, "hooks", "events")["Stop"].([]any)
+	if len(stop) != 1 || !strings.Contains(string(mustJSON(t, m)), "notify-send done") {
+		t.Fatalf("foreign hook damaged by removal: %v", stop)
+	}
+	_, removed, err = RemoveHooks(home, "zcode")
+	if err != nil || removed {
+		t.Fatalf("second remove should be a no-op: %v removed=%v", err, removed)
+	}
+}
+
+func mustJSON(t testing.TB, v any) []byte {
+	t.Helper()
+	raw, err := json.Marshal(v)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return raw
+}
+
+// A fresh install into a config without any hooks scaffolding works, and
+// removing our last entry takes the scaffolding with it.
+func TestZCodeHookInstallFromScratch(t *testing.T) {
+	home := t.TempDir()
+	if _, err := InstallHooks(home, "zcode", exe, data); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(home, ".zcode", "cli", "config.json")
+	events := dig(t, readJSON(t, path), "hooks", "events")
+	if _, ok := events["Stop"]; !ok {
+		t.Fatal("Stop event missing")
+	}
+	_, removed, err := RemoveHooks(home, "zcode")
+	if err != nil || !removed {
+		t.Fatalf("remove: %v removed=%v", err, removed)
+	}
+	m := readJSON(t, path)
+	if _, ok := m["hooks"]; ok {
+		t.Fatalf("empty hooks scaffolding left behind: %v", m["hooks"])
+	}
+}
+
+func TestOpenCodeHookInstallAndRemove(t *testing.T) {
+	home := t.TempDir()
+	path, err := InstallHooks(home, "opencode", exe, data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if filepath.Base(path) != "memorytree-capture.js" || !strings.Contains(path, filepath.Join(".config", "opencode", "plugins")) {
+		t.Fatalf("plugin path = %s", path)
+	}
+	script, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"session.idle", "capture-session", "Bun.spawn", "memorytree capture failed"} {
+		if !strings.Contains(string(script), want) {
+			t.Errorf("plugin script missing %q:\n%s", want, script)
+		}
+	}
+	_, removed, err := RemoveHooks(home, "opencode")
+	if err != nil || !removed {
+		t.Fatalf("remove: %v removed=%v", err, removed)
+	}
+	if _, err := os.Stat(path); !os.IsNotExist(err) {
+		t.Errorf("plugin file survived removal")
+	}
+	_, removed, err = RemoveHooks(home, "opencode")
+	if err != nil || removed {
+		t.Fatalf("second remove should be a no-op: %v removed=%v", err, removed)
+	}
+}
+
+func TestHookInstallUnsupportedClient(t *testing.T) {
+	if _, err := InstallHooks(t.TempDir(), "qoder", exe, data); err == nil {
+		t.Fatal("qoder hook install should fail (unsupported)")
+	}
+	if _, _, err := RemoveHooks(t.TempDir(), "deepseek"); err == nil {
+		t.Fatal("deepseek hook remove should fail (unsupported)")
+	}
+}

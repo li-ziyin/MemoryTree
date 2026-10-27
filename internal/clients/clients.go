@@ -23,6 +23,11 @@ func Known() []string {
 	return []string{"deepseek", "opencode", "qoder", "workbuddy", "zcode"}
 }
 
+// HookKnown lists the clients with session-end capture support.
+func HookKnown() []string {
+	return []string{"opencode", "zcode"}
+}
+
 // Install writes (or overwrites) the memorytree MCP server entry for the
 // named client and returns the configuration file path. The configuration
 // file is backed up next to itself before it is modified.
@@ -51,6 +56,35 @@ func Remove(home, name string) (string, bool, error) {
 	path := spec.path(home)
 	removed, err := spec.remove(path)
 	return path, removed, err
+}
+
+// InstallHooks wires the client's session-end hook so a finished session
+// leaves a capture in the inbox without any manual action. ZCode gets a
+// Stop hook merged into its config.json (configuration-file hooks must
+// also set hooks.enabled); OpenCode gets an auto-discovered plugin file
+// under its plugins directory. Both are idempotent.
+func InstallHooks(home, client, exe, dataDir string) (string, error) {
+	switch client {
+	case "zcode":
+		return installZCodeHooks(home, exe, dataDir)
+	case "opencode":
+		return installOpenCodePlugin(home, exe, dataDir)
+	default:
+		return "", fmt.Errorf("client %q has no session-end capture support yet; supported: %s", client, strings.Join(HookKnown(), ", "))
+	}
+}
+
+// RemoveHooks undoes InstallHooks; the second return reports whether a
+// hook installation was found and removed.
+func RemoveHooks(home, client string) (string, bool, error) {
+	switch client {
+	case "zcode":
+		return removeZCodeHooks(home)
+	case "opencode":
+		return removeOpenCodePlugin(home)
+	default:
+		return "", false, fmt.Errorf("client %q has no session-end capture support yet; supported: %s", client, strings.Join(HookKnown(), ", "))
+	}
 }
 
 var registry = map[string]clientSpec{
@@ -285,4 +319,192 @@ func deepseekRemove(path string) (bool, error) {
 		return false, err
 	}
 	return true, nil
+}
+
+// --- session-end hooks (ZCode Stop hook, OpenCode session.idle plugin) ---
+
+// captureArgsTag marks our hook entries inside a client's hooks array.
+const captureArgsTag = "capture-session"
+
+// installZCodeHooks merges a Stop hook into ~/.zcode/cli/config.json:
+// hooks.enabled must be true for configuration-file hooks to run at all,
+// and the entry is a type:process argument vector so no shell is involved.
+// Template variables ${CLAUDE_SESSION_ID} and ${ZCODE_PROJECT_DIR} are
+// expanded by the client; capture-session treats unexpanded leftovers as
+// absent.
+func installZCodeHooks(home, exe, dataDir string) (string, error) {
+	path := filepath.Join(home, ".zcode", "cli", "config.json")
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return "", err
+	}
+	m, err := readJSONObject(path)
+	if err != nil {
+		return "", err
+	}
+	hooks, _ := m["hooks"].(map[string]any)
+	if hooks == nil {
+		hooks = map[string]any{}
+	}
+	hooks["enabled"] = true
+	events, _ := hooks["events"].(map[string]any)
+	if events == nil {
+		events = map[string]any{}
+		hooks["events"] = events
+	}
+	stop, _ := events["Stop"].([]any)
+	stop = append(stripCaptureEntries(stop), map[string]any{
+		"hooks": []any{map[string]any{
+			"type":    "process",
+			"command": exe,
+			"args": []string{
+				captureArgsTag, "--source", "zcode",
+				"--session", "${CLAUDE_SESSION_ID}",
+				"--cwd", "${ZCODE_PROJECT_DIR}",
+				dataDir,
+			},
+			"timeoutMs":     60000,
+			"statusMessage": "MemoryTree: capturing session summary",
+		}},
+	})
+	events["Stop"] = stop
+	m["hooks"] = hooks
+	return path, writeJSONObject(path, m)
+}
+
+// removeZCodeHooks deletes our Stop entries and the scaffolding it added,
+// leaving any other hooks untouched.
+func removeZCodeHooks(home string) (string, bool, error) {
+	path := filepath.Join(home, ".zcode", "cli", "config.json")
+	m, err := readJSONObject(path)
+	if errors.Is(err, os.ErrNotExist) {
+		return path, false, nil
+	}
+	if err != nil {
+		return path, false, err
+	}
+	hooks, _ := m["hooks"].(map[string]any)
+	if hooks == nil {
+		return path, false, nil
+	}
+	events, _ := hooks["events"].(map[string]any)
+	if events == nil {
+		return path, false, nil
+	}
+	stop, _ := events["Stop"].([]any)
+	kept := stripCaptureEntries(stop)
+	if len(kept) == len(stop) {
+		return path, false, nil
+	}
+	if len(kept) > 0 {
+		events["Stop"] = kept
+	} else {
+		delete(events, "Stop")
+	}
+	if len(events) == 0 {
+		delete(hooks, "events")
+	}
+	if len(hooks) <= 1 { // only our enabled flag remains
+		delete(m, "hooks")
+	}
+	return path, true, writeJSONObject(path, m)
+}
+
+// stripCaptureEntries drops every Stop-group entry whose args start with
+// capture-session (an earlier memoryd installation), keeping the rest.
+func stripCaptureEntries(stop []any) []any {
+	var kept []any
+	for _, groupAny := range stop {
+		group, ok := groupAny.(map[string]any)
+		if !ok {
+			kept = append(kept, groupAny)
+			continue
+		}
+		entries, _ := group["hooks"].([]any)
+		var keptEntries []any
+		for _, entryAny := range entries {
+			if entry, ok := entryAny.(map[string]any); ok && argsStartWithCapture(entry["args"]) {
+				continue
+			}
+			keptEntries = append(keptEntries, entryAny)
+		}
+		if len(keptEntries) == 0 {
+			continue // group emptied entirely
+		}
+		group["hooks"] = keptEntries
+		kept = append(kept, group)
+	}
+	return kept
+}
+
+// argsStartWithCapture reports whether a hook entry's args (a []string we
+// just built or a []any read back from JSON) begin with the capture tag.
+func argsStartWithCapture(raw any) bool {
+	switch args := raw.(type) {
+	case []string:
+		return len(args) > 0 && args[0] == captureArgsTag
+	case []any:
+		if len(args) == 0 {
+			return false
+		}
+		s, _ := args[0].(string)
+		return s == captureArgsTag
+	}
+	return false
+}
+
+// opencodePluginName is the auto-discovered plugin file under
+// ~/.config/opencode/plugins/.
+const opencodePluginName = "memorytree-capture.js"
+
+func installOpenCodePlugin(home, exe, dataDir string) (string, error) {
+	dir := filepath.Join(home, ".config", "opencode", "plugins")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return "", err
+	}
+	path := filepath.Join(dir, opencodePluginName)
+	script := fmt.Sprintf(`// MemoryTree session-end capture — installed by "memoryd install --hooks opencode".
+// Auto-discovered from ~/.config/opencode/plugins/; remove the file (or
+// "memoryd install --hooks opencode --remove") to stop capturing.
+const EXE = %s
+const DATA_DIR = %s
+
+export const MemoryTreeCapture = async ({ directory }) => {
+  return {
+    event: async ({ event }) => {
+      if (event.type !== "session.idle") return
+      try {
+        const sid = String(event.properties?.sessionID ?? event.properties?.session ?? "")
+        const args = [EXE, "capture-session", "--source", "opencode"]
+        if (sid) args.push("--session", sid)
+        args.push("--cwd", String(directory ?? ""), DATA_DIR)
+        const proc = Bun.spawn(args, { stdin: "ignore", stdout: "ignore", stderr: "pipe" })
+        await proc.exited
+      } catch (e) {
+        console.error("memorytree capture failed:", e)
+      }
+    },
+  }
+}
+`, jsString(exe), jsString(dataDir))
+	return path, os.WriteFile(path, []byte(script), 0o644)
+}
+
+func removeOpenCodePlugin(home string) (string, bool, error) {
+	path := filepath.Join(home, ".config", "opencode", "plugins", opencodePluginName)
+	if err := os.Remove(path); err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return path, false, nil
+		}
+		return path, false, err
+	}
+	return path, true, nil
+}
+
+// jsString renders a Go string as a JavaScript string literal.
+func jsString(s string) string {
+	b, err := json.Marshal(s)
+	if err != nil {
+		return `""`
+	}
+	return string(b)
 }

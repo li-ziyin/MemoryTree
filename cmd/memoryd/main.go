@@ -2,6 +2,7 @@
 package main
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"flag"
@@ -11,8 +12,10 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/li-ziyin/memorytree/internal/bench"
+	"github.com/li-ziyin/memorytree/internal/capture"
 	"github.com/li-ziyin/memorytree/internal/clients"
 	"github.com/li-ziyin/memorytree/internal/export"
 	"github.com/li-ziyin/memorytree/internal/gardener"
@@ -65,6 +68,8 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		return runSupersede(args[1:], stdout, stderr)
 	case "inbox":
 		return runInbox(args[1:], stdin, stdout, stderr)
+	case "capture-session":
+		return runCaptureSession(args[1:], stdin, stdout, stderr)
 	case "doctor":
 		return runDoctor(args[1:], stdout, stderr)
 	case "export":
@@ -520,6 +525,84 @@ func runInbox(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	return 0
 }
 
+// runCaptureSession is the hook entry point: it merges the client's stdin
+// payload with explicit flags, renders a bounded session summary, and
+// stores it in the inbox (redacted there). Exit code 0 as long as the
+// capture landed — a hook must never fail a client session.
+func runCaptureSession(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
+	fs := flag.NewFlagSet("capture-session", flag.ContinueOnError)
+	fs.SetOutput(stderr)
+	source := fs.String("source", "hook", "client or person the session belongs to")
+	session := fs.String("session", "", "session identifier")
+	cwd := fs.String("cwd", "", "working directory of the session")
+	event := fs.String("event", "", "hook event name")
+	transcript := fs.String("transcript", "", "path to the session transcript (JSONL)")
+	if err := fs.Parse(args); err != nil {
+		if errors.Is(err, flag.ErrHelp) {
+			return 0
+		}
+		return 2
+	}
+	if fs.NArg() != 1 {
+		fmt.Fprintln(stderr, "usage: memoryd capture-session [--source NAME] [--session ID] [--cwd DIR] [--event NAME] [--transcript PATH] <data-dir>")
+		fmt.Fprintln(stderr, "       hook payload JSON on stdin is merged in (flags win)")
+		return 2
+	}
+
+	// An interactive terminal is not a hook: treat it as no payload so the
+	// command does not block waiting for EOF.
+	reader := stdin
+	if f, ok := stdin.(*os.File); ok {
+		if info, err := f.Stat(); err == nil && info.Mode()&os.ModeCharDevice != 0 {
+			reader = bytes.NewReader(nil)
+		}
+	}
+	payload, _ := io.ReadAll(reader)
+	var hook struct {
+		SessionID      string `json:"session_id"`
+		SessionIDCamel string `json:"sessionId"`
+		Cwd            string `json:"cwd"`
+		Event          string `json:"hook_event_name"`
+		Transcript     string `json:"transcript_path"`
+	}
+	if len(bytes.TrimSpace(payload)) > 0 {
+		if err := json.Unmarshal(payload, &hook); err != nil {
+			fmt.Fprintf(stderr, "memoryd: hook payload is not JSON (%v); capturing from flags only\n", err)
+		}
+	}
+
+	in := capture.Input{Source: *source}
+	in.Session = firstNonEmpty(*session, hook.SessionID, hook.SessionIDCamel)
+	in.Cwd = firstNonEmpty(*cwd, hook.Cwd)
+	in.Event = firstNonEmpty(*event, hook.Event)
+	in.TranscriptPath = firstNonEmpty(*transcript, hook.Transcript)
+
+	content := capture.Build(in, time.Now().UTC())
+	if len(content) == 0 {
+		fmt.Fprintln(stderr, "memoryd: empty capture; nothing stored")
+		return 2
+	}
+	path, redactions, err := inbox.Append(fs.Arg(0), in.Source, content)
+	if err != nil {
+		fmt.Fprintf(stderr, "memoryd: capture failed: %v\n", err)
+		return 1
+	}
+	if redactions > 0 {
+		fmt.Fprintf(stdout, "redacted %d item(s) before storing\n", redactions)
+	}
+	fmt.Fprintf(stdout, "captured session %s to %s\n", in.Session, path)
+	return 0
+}
+
+func firstNonEmpty(values ...string) string {
+	for _, v := range values {
+		if strings.TrimSpace(v) != "" {
+			return v
+		}
+	}
+	return ""
+}
+
 func runGardener(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	if len(args) == 0 {
 		fmt.Fprintln(stderr, "usage: memoryd gardener <data|apply> ...")
@@ -819,7 +902,8 @@ func runInstall(args []string, stdout, stderr io.Writer) int {
 	fs := flag.NewFlagSet("install", flag.ContinueOnError)
 	fs.SetOutput(stderr)
 	client := fs.String("client", "", "client to configure: "+strings.Join(clients.Known(), ", "))
-	remove := fs.Bool("remove", false, "remove the memorytree entry instead of adding it")
+	hooks := fs.Bool("hooks", false, "install the session-end capture hook instead of the MCP entry (clients: "+strings.Join(clients.HookKnown(), ", ")+")")
+	remove := fs.Bool("remove", false, "remove the memorytree entry (or hook) instead of adding it")
 	exePath := fs.String("exe", "", "path to the memoryd executable (default: this binary)")
 	if err := fs.Parse(args); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
@@ -830,6 +914,8 @@ func runInstall(args []string, stdout, stderr io.Writer) int {
 	if *client == "" {
 		fmt.Fprintln(stderr, "usage: memoryd install --client NAME [--exe PATH] <data-dir>")
 		fmt.Fprintln(stderr, "       memoryd install --client NAME --remove")
+		fmt.Fprintln(stderr, "       memoryd install --hooks --client NAME [--exe PATH] <data-dir>")
+		fmt.Fprintln(stderr, "       memoryd install --hooks --client NAME --remove")
 		return 2
 	}
 	known := false
@@ -847,6 +933,10 @@ func runInstall(args []string, stdout, stderr io.Writer) int {
 	if err != nil {
 		fmt.Fprintf(stderr, "memoryd: cannot find home directory: %v\n", err)
 		return 2
+	}
+
+	if *hooks {
+		return runInstallHooks(fs, *client, *remove, *exePath, home, stdout, stderr)
 	}
 
 	if *remove {
@@ -890,6 +980,52 @@ func runInstall(args []string, stdout, stderr io.Writer) int {
 		return 1
 	}
 	fmt.Fprintf(stdout, "memorytree MCP entry written for %s: %s\nrestart %s (or its session) to load the server\n", *client, path, *client)
+	return 0
+}
+
+// runInstallHooks installs or removes the session-end capture hook for the
+// clients that support one; fs is the shared install flag set.
+func runInstallHooks(fs *flag.FlagSet, client string, remove bool, exePath, home string, stdout, stderr io.Writer) int {
+	if remove {
+		if fs.NArg() != 0 {
+			fmt.Fprintln(stderr, "usage: memoryd install --hooks --client NAME --remove")
+			return 2
+		}
+		path, removed, err := clients.RemoveHooks(home, client)
+		if err != nil {
+			fmt.Fprintf(stderr, "memoryd: remove failed: %v\n", err)
+			return 1
+		}
+		if !removed {
+			fmt.Fprintf(stdout, "no memorytree capture hook found for %s\n", client)
+			return 0
+		}
+		fmt.Fprintf(stdout, "removed session capture hook for %s: %s\n", client, path)
+		return 0
+	}
+	if fs.NArg() != 1 {
+		fmt.Fprintln(stderr, "usage: memoryd install --hooks --client NAME [--exe PATH] <data-dir>")
+		return 2
+	}
+	dataDir, err := filepath.Abs(fs.Arg(0))
+	if err != nil {
+		fmt.Fprintf(stderr, "memoryd: bad data directory: %v\n", err)
+		return 2
+	}
+	exe := exePath
+	if exe == "" {
+		exe, err = os.Executable()
+		if err != nil {
+			fmt.Fprintf(stderr, "memoryd: cannot locate this binary; pass --exe: %v\n", err)
+			return 2
+		}
+	}
+	path, err := clients.InstallHooks(home, client, exe, dataDir)
+	if err != nil {
+		fmt.Fprintf(stderr, "memoryd: install failed: %v\n", err)
+		return 1
+	}
+	fmt.Fprintf(stdout, "session capture hook written for %s: %s\nfinished sessions will leave a redacted capture in %s (memoryd inbox)\n", client, path, filepath.Join(dataDir, ".inbox"))
 	return 0
 }
 
@@ -969,6 +1105,15 @@ Usage:
                                             (deepseek, opencode, qoder,
                                             workbuddy, zcode)
   memoryd install --client NAME --remove    remove the memorytree entry
+  memoryd install --hooks --client NAME [--exe PATH] <data-dir>
+                                            install the session-end capture
+                                            hook (opencode, zcode)
+  memoryd install --hooks --client NAME --remove
+                                            remove the capture hook
+  memoryd capture-session [--source NAME] [--session ID] [--cwd DIR] [--transcript PATH] <data-dir>
+                                            store one session summary in the
+                                            inbox (hook entry point; stdin
+                                            payload merged)
   memoryd gardener data [--out PATH] <data-dir>
                                             emit the tree analysis package
   memoryd gardener apply [--apply] [--json] <data-dir> < proposal.json
