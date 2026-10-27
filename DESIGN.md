@@ -312,6 +312,18 @@ Precondition (done 2026-10-20): one `git init` and initial commit in each of the
 
 Done (2026-10-27, see [docs/m3-acceptance.md](docs/m3-acceptance.md)): `memory_suggest_mount` (MCP + `memoryd suggest-mount`) and `memoryd gardener data/apply` (6 primitives, 17 G- rule codes, dry-run by default, rollback, one commit). Leave-one-out on 40 real entries: top-1 97.5% / top-3 100%; a 17-step real proposal dry-ran with zero writes, applied cleanly on a copy, and benched 21/21 after the restructure. The mandated 100-entry re-test reruns once the corpus grows (`go run ./scripts/loo <data-dir>`).
 
+### M4: capture, hardening, and sync (planned 2026-10-27)
+
+Closes the real gaps surfaced by shared-memory operation across five clients. Scope and acceptance:
+
+1. **Session-end auto-capture hooks** — per-client hook wiring (ZCode `Stop` hook, Qoder/OpenCode equivalents) that feeds `memoryd inbox` with a session summary; shipped as documented snippets and optionally installed by `memoryd install --hooks`. *Acceptance:* a finished session leaves an inbox capture without any manual action in at least ZCode plus one other client; the capture passes the inbox format and redaction.
+2. **State redaction** — extend `internal/redact` beyond credential patterns to session-state identifiers: absolute home paths, hostnames, and machine-local tokens, at capture and write time. *Acceptance:* pattern tests for paths/hostnames; the write response reports counts; the false-positive policy is documented and tested (for example, repository-relative refs stay intact).
+3. **`memoryd sync`** — fetch + rebase + push for the data repository under the single-writer lock; refuses on a dirty tree (points at `doctor`), never auto-resolves conflicts. *Acceptance:* a two-clone simulation converges with concurrent edits on both sides; a mid-write crash leaves the tree recoverable; conflicts surface as plain git conflicts.
+4. **Usage signals for the gardener** — count per-entry returns (`search`/`brief` hits) and expose last-used/never-used stats in the gardener data package, so cold entries can be proposed for deprecation. *Acceptance:* `gardener data` includes usage stats; a never-returned, months-old entry can be flagged by a proposal; counts stay out of the memory files (derived data only).
+5. **Write auto-retry** — write tools retry bounded (once) on lock contention instead of failing fast. *Acceptance:* two concurrent writers both succeed without caller-side retry; a permanently held lock still fails with the retryable code.
+
+Explicitly still out of scope for M4 (unchanged deferrals): semantic retrieval (V2 evidence-gated), incremental indexing (needed past ~10k entries), embedded go-git, `.archive/` encryption at rest, and the module-path rename before the first tagged release.
+
 ## 11. Open questions
 
 1. ~~Mapping the current project from cwd to a node: does V1 take `project` explicitly from the caller, or add a local `projects.yaml` map~~ Resolved (2026-10-27): `memory_brief` takes an explicit `project` first, then `MEMORYTREE_PROJECT`, then `cwd` matched against the optional `projects.yaml` (spec §6.1); resolution failure warns and keeps serving.
@@ -320,7 +332,7 @@ Done (2026-10-27, see [docs/m3-acceptance.md](docs/m3-acceptance.md)): `memory_s
 4. ~~May `memory_add` mechanically truncate the body into a `summary`, or must it require a semantic one~~ Resolved (with M2): require a non-empty semantic summary (V-CONTENT-1); no mechanical truncation; semantics are constrained by the distillation prompt.
 5. Is git a hard dependency: V1 requires system git and stays read-only without it; or embed go-git? (current: system git is a hard write dependency; missing git refuses writes)
 6. Does the raw `.archive/` need optional encryption at rest, or do OS permissions suffice? (current: OS permissions, 0600, out of git)
-7. Is multi-device sync left entirely to the user's own git remote/cloud drive, with no built-in sync? (current: no built-in sync)
+7. Is multi-device sync left entirely to the user's own git remote/cloud drive, with no built-in sync? (resolved as planned: `memoryd sync` is M4 scope — fetch + rebase + push under the single-writer lock, dirty trees refused, conflicts never auto-resolved)
 
 ## 12. Related documents
 
