@@ -2,7 +2,7 @@
 
 Local-first, file-based memory for AI agents: a self-organizing tree of Markdown memories shared across ZCode, OpenCode, Qoder, and any MCP-capable client.
 
-> **Status: M3 complete.** Everything from M1/M2 (v1 format, validator, init, legacy import, disposable SQLite FTS5 index, read-only MCP server, write gateway `memory_add` / `memory_supersede`, `memoryd inbox` capture) plus insertion placement and the gardener: `memory_suggest_mount` over MCP and CLI, `memoryd gardener data/apply` with six primitives, rule-code validation, dry-run by default, rollback, and a single git commit per proposal. The approved restructure of the live repository landed as one `gardener:` commit (bench 21/21). Next: `memoryd doctor` crash recovery, release hardening.
+> **Status: M3 complete.** Everything from M1/M2 (v1 format, validator, init, legacy import, disposable SQLite FTS5 index, read-only MCP server, write gateway `memory_add` / `memory_supersede`, `memoryd inbox` capture) plus insertion placement and the gardener: `memory_suggest_mount` over MCP and CLI, `memoryd gardener data/apply` with six primitives, rule-code validation, dry-run by default, rollback, and a single git commit per proposal. The approved restructure of the live repository landed as one `gardener:` commit (bench 21/21), and `memoryd doctor` finishes the crash-recovery story (detect uncommitted writes, recover with one commit, never discard data). Next: release hardening.
 
 ## Why
 
@@ -75,6 +75,11 @@ echo '{"type":"project","title":"...","summary":"...","body":"...",
 
 # Capture raw text now, distill later (see docs/distillation-prompt.md)
 echo "raw notes..." | ./bin/memoryd inbox ~/.memorytree --source zcode
+
+# Detect and recover crashed writes (uncommitted files, interrupted atomic
+# writes); --fix removes leftovers and commits, never discarding data
+./bin/memoryd doctor ~/.memorytree
+./bin/memoryd doctor --fix ~/.memorytree
 
 # Rerun retrieval questions and fail when a gold entry is not the first hit
 ./bin/memoryd bench ~/.memorytree bench-questions.jsonl

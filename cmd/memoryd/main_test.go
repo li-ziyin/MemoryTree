@@ -256,6 +256,59 @@ func TestRunAddAndSupersede(t *testing.T) {
 	}
 }
 
+func TestRunDoctor(t *testing.T) {
+	dir := writeRepo(t)
+
+	// Healthy repository: exit 0, no findings.
+	var stdout, stderr bytes.Buffer
+	code := run([]string{"doctor", dir}, strings.NewReader(""), &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("healthy doctor code = %d, stdout %s stderr %s", code, stdout.String(), stderr.String())
+	}
+	if !strings.Contains(stdout.String(), "no findings") {
+		t.Errorf("healthy stdout = %q", stdout.String())
+	}
+
+	// Simulate a crash: entry written and committed, then the commit is lost.
+	stdout.Reset()
+	stderr.Reset()
+	code = run([]string{"add", dir}, strings.NewReader(addJSON), &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("add code = %d, stderr: %s", code, stderr.String())
+	}
+	if out, err := exec.Command("git", "-C", dir, "reset", "--soft", "HEAD~1").CombinedOutput(); err != nil {
+		t.Fatalf("git reset: %v: %s", err, out)
+	}
+
+	stdout.Reset()
+	stderr.Reset()
+	code = run([]string{"doctor", dir}, strings.NewReader(""), &stdout, &stderr)
+	if code != 1 {
+		t.Fatalf("dirty doctor code = %d, want 1; stdout %s stderr %s", code, stdout.String(), stderr.String())
+	}
+	if !strings.Contains(stdout.String(), "memories/") {
+		t.Errorf("dirty stdout does not list the entry: %q", stdout.String())
+	}
+
+	stdout.Reset()
+	stderr.Reset()
+	code = run([]string{"doctor", "--fix", dir}, strings.NewReader(""), &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("doctor --fix code = %d, stdout %s stderr %s", code, stdout.String(), stderr.String())
+	}
+	if !strings.Contains(stdout.String(), "doctor recovery") {
+		t.Errorf("fix stdout = %q", stdout.String())
+	}
+	if out, err := exec.Command("git", "-C", dir, "status", "--porcelain").CombinedOutput(); err != nil || strings.TrimSpace(string(out)) != "" {
+		t.Errorf("git status not clean after fix: %v: %s", err, out)
+	}
+
+	// Usage error path.
+	if code := run([]string{"doctor"}, strings.NewReader(""), io.Discard, &bytes.Buffer{}); code != 2 {
+		t.Fatalf("doctor usage code = %d, want 2", code)
+	}
+}
+
 func TestRunInbox(t *testing.T) {
 	dir := writeRepo(t)
 

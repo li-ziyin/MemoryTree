@@ -1,6 +1,6 @@
 # MemoryTree 设计文档
 
-- 状态：M1 实现完成，检索验收复测通过（2026-10-25：20/20 完整与首条命中；每题独立会话 14,723 vs 基线 67,796 token，见 [docs/m1-acceptance.md](docs/m1-acceptance.md)）；人工评分 4.95 已确认（2026-10-26）。工程加固完成（2026-10-26）：CI 三平台矩阵与 schema 一致性检查、解析层直接测试与 fuzz、规模基线（[docs/perf-baseline.md](docs/perf-baseline.md)）、`memoryd bench` 检索回归门、短词 rune 拆分 FTS（索引 schema v2）、MCP 过期警告与请求超时。M2 写路径完成（2026-10-27）：`memory_add`/`memory_supersede`（MCP + CLI）、单写者锁与崩溃回收、git 提交、inbox 采集与蒸馏提示词、真实仓 40 条（[docs/m2-acceptance.md](docs/m2-acceptance.md)）。M3 挂载与 gardener 完成（2026-10-27）：`memory_suggest_mount`（MCP+CLI）与留一法验收、`memoryd gardener data/apply`（6 原语、G- 规则码、dry-run 默认、回滚、单提交；详见 [docs/gardener.md](docs/gardener.md) 与 [docs/m3-acceptance.md](docs/m3-acceptance.md)）。重排提案经用户批准后已应用到真实仓（2026-10-27：单提交 `dc95f2d`，7 节点 40 条，bench 21/21 首条命中）。
+- 状态：M1 实现完成，检索验收复测通过（2026-10-25：20/20 完整与首条命中；每题独立会话 14,723 vs 基线 67,796 token，见 [docs/m1-acceptance.md](docs/m1-acceptance.md)）；人工评分 4.95 已确认（2026-10-26）。工程加固完成（2026-10-26）：CI 三平台矩阵与 schema 一致性检查、解析层直接测试与 fuzz、规模基线（[docs/perf-baseline.md](docs/perf-baseline.md)）、`memoryd bench` 检索回归门、短词 rune 拆分 FTS（索引 schema v2）、MCP 过期警告与请求超时。M2 写路径完成（2026-10-27）：`memory_add`/`memory_supersede`（MCP + CLI）、单写者锁与崩溃回收、git 提交、inbox 采集与蒸馏提示词、真实仓 40 条（[docs/m2-acceptance.md](docs/m2-acceptance.md)）。M3 挂载与 gardener 完成（2026-10-27）：`memory_suggest_mount`（MCP+CLI）与留一法验收、`memoryd gardener data/apply`（6 原语、G- 规则码、dry-run 默认、回滚、单提交；详见 [docs/gardener.md](docs/gardener.md) 与 [docs/m3-acceptance.md](docs/m3-acceptance.md)）。重排提案经用户批准后已应用到真实仓（2026-10-27：单提交 `dc95f2d`，7 节点 40 条，bench 21/21 首条命中）。崩溃恢复 `memoryd doctor` 落地（2026-10-27：检测未提交 managed 变更与崩溃残留，`--fix` 校验后单提交恢复，含 index 领先于 HEAD 的部分手工恢复态；不丢数据、不 reset）。
 - 工作名：MemoryTree；二进制名：`memoryd`
 - 语言与形态：Go，单二进制、默认 stdio、无后台常驻服务
 - 数据目录：独立 git 仓库；本机开发数据先定 `E:\MemoryTreeData`，其他用户默认 `~/.memorytree`
@@ -220,7 +220,7 @@ E:\MemoryTreeData\
 
 - 读：SQLite WAL，多进程可并发读；索引带 `generation`。只读 MCP 在启动时校验仓库并按文件指纹刷新索引，会话期间使用该启动快照；外部手改文件后需重启服务端。损坏或 schema 不兼容的索引不会自动重建，服务端拒绝启动并提示 `memoryd index --rebuild`。
 - 写：跨进程文件锁串行化；写文件用同目录临时文件 + fsync + rename；索引更新与 git commit 在同一临界区内（M2）。
-- 崩溃恢复：写文件成功但 commit 失败时保留 dirty tree，`memoryd doctor` 检测并补提交；不丢数据，不自动 reset。
+- 崩溃恢复：写文件成功但 commit 失败时保留 dirty tree，`memoryd doctor` 检测并补提交（已实现 2026-10-27：`memoryd doctor [--fix] [--json]`，检测 managed 文件的未提交新增/修改/删除与 `.tmp-` 崩溃残留；`--fix` 在写锁内清理残留、树校验通过后按 pathspec 补一个 `memoryd: doctor recovery` 提交，树无效则拒绝提交且不改动任何数据）；不丢数据，不自动 reset。
 - 索引损坏：`memoryd index --rebuild` 从文件重建；源文件永远优先。
 
 ## 6. 采集流程

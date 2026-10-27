@@ -61,6 +61,8 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		return runSupersede(args[1:], stdout, stderr)
 	case "inbox":
 		return runInbox(args[1:], stdin, stdout, stderr)
+	case "doctor":
+		return runDoctor(args[1:], stdout, stderr)
 	case "gardener":
 		return runGardener(args[1:], stdin, stdout, stderr)
 	case "version":
@@ -647,6 +649,69 @@ func printGardenerReport(w io.Writer, report *gardener.Report) {
 	}
 }
 
+func runDoctor(args []string, stdout, stderr io.Writer) int {
+	fs := flag.NewFlagSet("doctor", flag.ContinueOnError)
+	fs.SetOutput(stderr)
+	fix := fs.Bool("fix", false, "remove crash leftovers and commit uncommitted managed files")
+	asJSON := fs.Bool("json", false, "emit the report as JSON")
+	if err := fs.Parse(args); err != nil {
+		if errors.Is(err, flag.ErrHelp) {
+			return 0
+		}
+		return 2
+	}
+	if fs.NArg() != 1 {
+		fmt.Fprintln(stderr, "usage: memoryd doctor [--fix] [--json] <data-dir>")
+		return 2
+	}
+
+	rep, err := store.Doctor(fs.Arg(0), *fix)
+	if err != nil {
+		fmt.Fprintf(stderr, "memoryd: doctor failed: %v\n", err)
+		return 1
+	}
+	if *asJSON {
+		enc := json.NewEncoder(stdout)
+		enc.SetIndent("", "  ")
+		if err := enc.Encode(rep); err != nil {
+			fmt.Fprintf(stderr, "memoryd: cannot write JSON: %v\n", err)
+			return 2
+		}
+	} else {
+		for _, rel := range rep.TempFiles {
+			fmt.Fprintf(stdout, "temp   %s\n", rel)
+		}
+		for _, f := range rep.Dirty {
+			fmt.Fprintf(stdout, "dirty  %-2s %s\n", f.Code, f.Path)
+		}
+		if rep.OtherUntracked > 0 {
+			fmt.Fprintf(stdout, "note   %d untracked non-managed file(s) ignored\n", rep.OtherUntracked)
+		}
+		if rep.Validation != nil {
+			for _, issue := range rep.Validation.Issues {
+				fmt.Fprintf(stdout, "%-7s %-18s %s: %s\n", issue.Severity, issue.Code, issue.Path, issue.Message)
+			}
+		}
+		if rep.Aborted != "" {
+			fmt.Fprintf(stdout, "aborted: %s\n", rep.Aborted)
+		}
+		switch {
+		case rep.Committed:
+			fmt.Fprintf(stdout, "committed: %s\n", rep.CommitMessage)
+		case rep.FixedTemp > 0 && len(rep.Dirty) == 0:
+			fmt.Fprintf(stdout, "removed %d crash leftover(s)\n", rep.FixedTemp)
+		case len(rep.Dirty) == 0 && len(rep.TempFiles) == 0:
+			fmt.Fprintln(stdout, "healthy: no findings")
+		default:
+			fmt.Fprintf(stdout, "run with --fix to recover (nothing is discarded)\n")
+		}
+	}
+	if rep.NeedsAttention() {
+		return 1
+	}
+	return 0
+}
+
 func runValidate(args []string, stdout, stderr io.Writer) int {
 	fs := flag.NewFlagSet("validate", flag.ContinueOnError)
 	fs.SetOutput(stderr)
@@ -710,6 +775,8 @@ Usage:
                                             link an existing supersede pair
   memoryd inbox [--file PATH] [--source NAME] [--list] <data-dir>
                                             append a raw capture to .inbox/
+  memoryd doctor [--fix] [--json] <data-dir>
+                                            detect and recover crashed writes
   memoryd gardener data [--out PATH] <data-dir>
                                             emit the tree analysis package
   memoryd gardener apply [--apply] [--json] <data-dir> < proposal.json
