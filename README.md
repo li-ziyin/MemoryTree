@@ -126,8 +126,14 @@ The user data repository is separate. The default is `~/.memorytree`; it can be 
 
 ## Documentation
 
-- [Design document](DESIGN.md)
-- [Memory format v1](spec/memory-format-v1.md)
+English-first; `*.zh-CN.md` files are synced Chinese versions.
+
+- [Design document](DESIGN.md)（[中文](DESIGN.zh-CN.md)）
+- [Memory format v1](spec/memory-format-v1.md)（[中文](spec/memory-format-v1.zh-CN.md)）
+- [MCP API reference](docs/mcp-api.md)
+- [Migration guide](docs/migration.md)
+- [Gardener workflow](docs/gardener.md)（[中文](docs/gardener.zh-CN.md)）
+- [All documentation](docs/README.md) — acceptance records, performance baseline, capture flow
 - [Contributing](CONTRIBUTING.md)
 - [Security policy](SECURITY.md)
 

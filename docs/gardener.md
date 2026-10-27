@@ -1,60 +1,60 @@
-# Gardener：离线树维护流程
+# Gardener: the offline tree-maintenance flow
 
-gardener 是一个由 Agent 执行的离线任务：读取数据包 → 产出提案 JSON → dry-run 校验 → 人批准 → 应用。核心进程不调用任何模型；提案质量由 Agent 负责，合法性由 `memoryd` 保证。
+The gardener is an offline task executed by an agent: read the analysis package → produce a proposal JSON → dry-run validation → human approval → apply. The core process calls no model; the agent owns proposal quality, `memoryd` owns legality.
 
-## 流程
+## Flow
 
 ```text
-memoryd gardener data <data-dir>          # 1. 生成分析数据包（JSON，含提案格式指南）
-Agent 阅读数据包，产出 proposal.json       # 2. 提案（操作列表 + 理由）
-memoryd gardener apply <data-dir> < proposal.json        # 3. dry-run（默认，零写入）
-memoryd gardener apply --apply <data-dir> < proposal.json # 4. 应用（人批准后）
+memoryd gardener data <data-dir>          # 1. emit the analysis package (JSON, with a proposal format guide)
+the agent reads the package and writes proposal.json   # 2. propose (operation list + rationale)
+memoryd gardener apply <data-dir> < proposal.json        # 3. dry-run (default, zero writes)
+memoryd gardener apply --apply <data-dir> < proposal.json # 4. apply (after human approval)
 ```
 
-- 第 3 步通过不代表必须执行第 4 步；应用永远由人触发。
-- 任一操作违规 → 整案拒绝、零写入；应用后全仓校验失败 → 自动回滚，原始树不变。
-- 应用 = 写锁 → 模拟校验 → 执行 → 全仓校验 → 索引重建 → 恰好一个 `gardener:` 前缀的 git 提交。
+- Passing step 3 never obligates step 4; application is always human-triggered.
+- Any violating operation rejects the whole proposal with zero writes; a repository-wide validation failure after applying rolls everything back — the original tree is untouched.
+- Apply = write lock → simulated validation → execution → repository-wide validation → index rebuild → exactly one git commit prefixed `gardener:`.
 
-## 提案 JSON
+## Proposal JSON
 
 ```json
 {
   "author": "agent-name",
-  "reason": "一句话说明动机（进入 git 提交信息）",
+  "reason": "one line of motivation (lands in the git commit message)",
   "operations": [
     {"op": "move_node",   "node": "work/agentflow", "target": ".", "reason": "..."},
     {"op": "move_entry",  "entry": "<UUIDv7>", "target": "work/agentflow", "reason": "..."},
     {"op": "retag_node",  "node": "work", "add": ["java"], "remove": ["career"], "reason": "..."},
-    {"op": "revise_node", "node": "work/agentflow", "summary": "新摘要", "reason": "..."},
+    {"op": "revise_node", "node": "work/agentflow", "summary": "new summary", "reason": "..."},
     {"op": "create_node", "target": "work", "kind": "project", "slug": "ml",
-     "title": "ML", "summary": "机器学习试验", "tags_delta": ["ml"], "reason": "..."},
+     "title": "ML", "summary": "machine-learning experiments", "tags_delta": ["ml"], "reason": "..."},
     {"op": "archive_node", "node": "work/old-thing", "reason": "..."}
   ]
 }
 ```
 
-- `node`/`target` 用 UUIDv7 或 slug 路径；路径按先前操作后的模拟树解析，因此「先 create 再往里 move」可行。
-- `revise_node` 省略的字段保持原值；`create_node` 的 `sensitivity` 省略时继承父节点。
-- split = `create_node` + `move_node`/`move_entry`；merge = moves + `archive_node`。
-- 上限 200 操作/提案。
-- `move_entry` 会自动从条目 `tags_delta` 剔除目标节点已提供的标签（V-TAG-2），步骤报告 `drop_tags`。
+- `node`/`target` take a UUIDv7 or a slug path; paths resolve against the simulated tree after earlier operations, so "create then move into it" works inside one proposal.
+- Fields omitted by `revise_node` keep their current values; a `create_node` without `sensitivity` inherits the parent's.
+- split = `create_node` + `move_node`/`move_entry`; merge = moves + `archive_node`.
+- Cap: 200 operations per proposal.
+- `move_entry` automatically drops tags from the entry's `tags_delta` that the target node already provides (V-TAG-2); the step reports `drop_tags`.
 
-## 规则码（G-）
+## Rule codes (G-)
 
-| 码 | 含义 |
+| Code | Meaning |
 |---|---|
-| G-OP-1 | 未知操作或格式错误 |
-| G-NODE-1 / G-ENTRY-1 | 引用的节点/条目不存在 |
-| G-CYCLE-1 | move 到自身或后代 |
-| G-KIND-1/2/3/4 | kind 限制：project/global 不能有子节点；create 只能建 project/category；条目只能进 project/global；root 与 global 不能归档 |
-| G-SLUG-1 | slug 非法、保留名或与目标父下冲突 |
-| G-SENS-1/2 | 敏感级别弱化（节点对新父 / 条目对新宿主） |
-| G-TAG-1/2 | 标签语法/重复/继承重复 / remove 不在自身 delta |
-| G-NODE-2 | 目标节点非 active |
-| G-CONTENT-1 | title/summary 为空或超长 |
-| G-LIMIT-1 | 操作数超上限 |
-| G-DEPTH-1 / G-BRANCH-1 | 警告：深度>4 / 同父子节点>8（不阻断，工具策略） |
+| G-OP-1 | unknown operation or malformed step |
+| G-NODE-1 / G-ENTRY-1 | referenced node/entry does not exist |
+| G-CYCLE-1 | move into itself or a descendant |
+| G-KIND-1/2/3/4 | kind limits: project/global may not have children; create builds only project/category; entries enter only project/global; root and global cannot be archived |
+| G-SLUG-1 | slug illegal, reserved, or colliding under the target parent |
+| G-SENS-1/2 | sensitivity weakening (node toward a new parent / entry toward a new host) |
+| G-TAG-1/2 | tag syntax/duplicate/inherited-duplicate / `remove` of a tag not in the node's own delta |
+| G-NODE-2 | target node is not active |
+| G-CONTENT-1 | title/summary empty or too long |
+| G-LIMIT-1 | operation count over the cap |
+| G-DEPTH-1 / G-BRANCH-1 | warnings: depth>4 / >8 children under one parent (non-blocking, tool policy) |
 
-## 数据包信号
+## Package signals
 
-`gardener data` 为每个节点给出：路径、kind、有效标签与 delta、深度、子节点数、条目数、时间戳，以及结构信号 `children>8`、`depth>4`、`empty-project`；并给出同父节点对的有效标签重叠（Jaccard ≥ 0.5）作为 merge/restructure 触发线索。检索失败日志 V1 暂未落盘，后续可由 MCP 层记录。
+`gardener data` reports, per node: path, kind, effective tags and deltas, depth, child count, entry count, timestamps, plus the structural signals `children>8`, `depth>4`, and `empty-project`; it also reports effective-tag overlap between same-parent node pairs (Jaccard ≥ 0.5) as merge/restructure triggers. Retrieval-failure logs are not persisted in V1; the MCP layer may record them later.

@@ -4,7 +4,7 @@ The on-disk format is the project's long-lived contract. Code is replaceable; a 
 
 ## Current version
 
-- **v1 (draft)** — [memory-format-v1.md](memory-format-v1.md)
+- **v1 (draft)** — [memory-format-v1.md](memory-format-v1.md)（[中文同步版](memory-format-v1.zh-CN.md)）
 - JSON Schemas:
   - [repo.schema.json](schema/repo.schema.json) — `memory.yaml`
   - [node.schema.json](schema/node.schema.json) — `node.md`
