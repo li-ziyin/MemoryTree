@@ -7,7 +7,7 @@ MemoryTree links the following third-party code into the `memoryd` binary. This 
 | Component | Version | Purpose | License |
 |---|---|---|---|
 | gopkg.in/yaml.v3 | v3.0.1 | YAML frontmatter parsing and writing | MIT / Apache-2.0 (dual) |
-| golang.org/x/text | v0.29.0 | Unicode NFC normalisation for tags | BSD-3-Clause |
+| golang.org/x/text | v0.43.0 | Unicode NFC normalisation for tags | BSD-3-Clause |
 | modernc.org/sqlite | v1.59.0 | pure-Go SQLite driver with FTS5 for the local index | BSD-3-Clause |
 | Go standard library | Go 1.27.3 | runtime and core packages | BSD-3-Clause |
 
