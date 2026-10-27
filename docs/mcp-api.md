@@ -87,7 +87,12 @@ Each candidate carries its score, matched tags, matched tokens, and a rationale,
 
 ### memory_add *(write)*
 
-Write one new entry: rule-code validation, credential redaction, atomic write, git commit, index refresh — all under the single-writer lock. The entry is searchable in the same session. Common secret formats (cloud access keys, platform tokens, private-key blocks, `password:`-style fields) in the title, summary, or body are replaced with `[REDACTED]` before anything touches disk; the response reports the count and never the originals.
+Write one new entry: rule-code validation, redaction, atomic write, git commit, index refresh — all under the single-writer lock. The entry is searchable in the same session. Two redaction classes run over the title, summary, and body before anything touches disk, replacing hits with `[REDACTED]`:
+
+- **Credentials** — cloud access keys, platform tokens, private-key blocks, `password:`-style fields, Authorization headers.
+- **Machine-local session state** — absolute paths anchored at a home directory (`C:\Users\…`, `/home/…`, `/Users/…`, `/root/…`), `HOME`/`USERPROFILE` assignments, dotless hostnames in labeled fields (`host:`, `hostname:`, `COMPUTERNAME=`), and dotless `user@host` prompt tokens.
+
+The response reports the total replacement count and never the originals. False-positive policy: repository-relative references, URLs, email addresses, dotted (qualified) hostnames, IP addresses, and non-home absolute paths (other drives, `/var/…`) always survive; write such values in a qualified form when they must stay readable.
 
 | Parameter | Type | Required | Notes |
 |---|---|---|---|

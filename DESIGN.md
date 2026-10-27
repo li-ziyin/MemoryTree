@@ -257,7 +257,7 @@ V1 only generates proposals and dry-runs them; real application is always trigge
 - Local by default: V1 is stdio-only — no ports, no network, no telemetry; the core calls no external model.
 - Path containment: every file operation stays inside the data repository root; real paths are resolved and escapes rejected; format-managed files reject symbolic links.
 - YAML safety: the parser disables custom tags; frontmatter is size-bounded (suggested 64 KiB) as are bodies (suggested 1 MiB); the parser is fuzzed.
-- Redaction: before capture and writes, common secret formats are scanned (cloud AKs, GitHub tokens, private key headers, password fields…); hits are replaced with `[REDACTED]`, the count recorded in metadata, never the original.
+- Redaction: before capture and writes, two classes are scanned — common secret formats (cloud AKs, GitHub tokens, private key headers, password fields…) and machine-local session state (home-anchored absolute paths, `HOME`/`USERPROFILE` assignments, dotless hostnames in labeled fields, dotless `user@host` tokens). Hits are replaced with `[REDACTED]`, the count recorded in metadata, never the original. The false-positive policy keeps repository-relative references, URLs, emails, and dotted hostnames intact.
 - Permissions: data directory 0700, files 0600 (Windows uses equivalent ACL/inheritance); the raw archive stays out of git.
 - Prompt injection: MCP responses label content as historical data; tools expose no "run commands / access the network" capability; documentation tells clients not to treat memories as system instructions.
 - Export and sharing: filtered by `sensitivity`; `private` entries are excluded by default; no automatic pushes to remotes.

@@ -146,3 +146,112 @@ func TestScanPrivateKeyBlockCountsOnce(t *testing.T) {
 		t.Fatalf("key body survived: %q", out)
 	}
 }
+
+// TestScanRedactsHomePaths covers home-anchored absolute paths in the
+// shapes real captures use: bare, quoted, after an env-style separator,
+// and bounded by newlines.
+func TestScanRedactsHomePaths(t *testing.T) {
+	cases := []struct {
+		name string
+		in   string
+		gone string
+		kept string
+	}{
+		{"windows drive path", "log lives at C:\\Users\\duner779\\logs\\app.txt", "duner779", ""},
+		{"windows lowercase", "see c:\\users\\someone\\notes.md", "someone", ""},
+		{"unix home", "config in /home/alice/.config/app.conf", "alice", ""},
+		{"macos users", "prefs at /Users/bob/Library/Preferences", "bob", ""},
+		{"unix root user", "root scripts under /root/deploy/run.sh", "/root", ""},
+		{"quoted path", "open \"C:\\Users\\carol\\secrets.txt\" first", "carol", `"`},
+		{"after separator", "path=C:\\Users\\dave\\repo\\file.go", "dave", "path="},
+		{"newline-bounded", "\n/home/eve/work\n", "/home/eve", "\n"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			out, n := Scan(tc.in)
+			if n < 1 {
+				t.Fatalf("nothing redacted in %q", tc.in)
+			}
+			if strings.Contains(out, tc.gone) {
+				t.Fatalf("identifier survived: %q", out)
+			}
+			if tc.kept != "" && !strings.Contains(out, tc.kept) {
+				t.Fatalf("boundary text lost: %q", out)
+			}
+			if !strings.Contains(out, "[REDACTED]") {
+				t.Fatalf("no marker in %q", out)
+			}
+		})
+	}
+}
+
+// TestScanRedactsMachineHostnames covers labeled dotless hostnames and
+// user@host prompt tokens.
+func TestScanRedactsMachineHostnames(t *testing.T) {
+	cases := []struct {
+		name string
+		in   string
+		gone string
+	}{
+		{"host label", "connect via host: LAPTOP-9X2C7 today", "LAPTOP-9X2C7"},
+		{"hostname label", "hostname=build01 restarts nightly", "build01"},
+		{"computername env", "COMPUTERNAME=DESKTOP-AB12CD", "DESKTOP-AB12CD"},
+		{"prompt token", "prompt shows eve@WORKSTATION-7 here", "eve@WORKSTATION-7"},
+		{"prompt colon", "shell eve@buildsrv:~/proj", "eve@buildsrv"},
+		{"home env", "HOME=/home/frank and USERPROFILE=C:\\Users\\frank", "frank"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			out, n := Scan(tc.in)
+			if n < 1 {
+				t.Fatalf("nothing redacted in %q", tc.in)
+			}
+			if strings.Contains(out, tc.gone) {
+				t.Fatalf("hostname survived: %q", out)
+			}
+			if !strings.Contains(out, "[REDACTED]") {
+				t.Fatalf("no marker in %q", out)
+			}
+		})
+	}
+}
+
+// TestScanKeepsQualifiedAndRelativeText pins the false-positive policy:
+// repository-relative references, URLs, emails, dotted hostnames, IPs,
+// and non-home absolute paths always survive.
+func TestScanKeepsQualifiedAndRelativeText(t *testing.T) {
+	normal := []string{
+		"entry lives at work/agentflow/memories/20261027T101112-abcd1234.md",
+		"docs at https://example.com/home/page and http://10.0.0.1:8080/x",
+		"contact duner779@163.com or alice.smith@example.org",
+		"ssh git@github.com and deploy@ci.example.com work",
+		"host: example.com plus host: 127.0.0.1 stay readable",
+		"data dir E:\\MemoryTreeData and logs in /var/log/app",
+		"the user home directory concept, not a path",
+		"see ~/notes/personal.md relative to home",
+	}
+	for _, in := range normal {
+		out, n := Scan(in)
+		if out != in || n != 0 {
+			t.Errorf("Scan(%q) = %q, %d; want unchanged, 0", in, out, n)
+		}
+	}
+}
+
+// Mixed content: each category is counted exactly once even when shapes
+// overlap (an assignment whose value is a home path).
+func TestScanCountsStateAndCredentialsSeparately(t *testing.T) {
+	in := "HOME=/home/vera token " + fakeGHPToken + " host: WEB-01"
+	out, n := Scan(in)
+	if n != 3 {
+		t.Fatalf("count = %d, want 3 (%q)", n, out)
+	}
+	if got := strings.Count(out, "[REDACTED]"); got != 3 {
+		t.Fatalf("markers = %d, want 3 (%q)", got, out)
+	}
+	for _, gone := range []string{"/home/vera", fakeGHPToken, "WEB-01"} {
+		if strings.Contains(out, gone) {
+			t.Fatalf("survived %q in %q", gone, out)
+		}
+	}
+}
