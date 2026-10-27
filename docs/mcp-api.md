@@ -6,7 +6,7 @@
 
 - Methods: `initialize`, `ping`, `tools/list`, `tools/call`. Notifications get no response; batch requests are rejected.
 - Protocol versions: `2024-11-05`, `2025-03-26`, `2025-06-18`; unknown versions fall back to `2025-06-18`.
-- The server validates the repository and refreshes the index at startup, then works from that snapshot. Hand-edited files are detected by a fingerprint check (re-read at most once per 30 s) and surfaced as a stale-index warning; restart the server after hand edits. A corrupt or schema-incompatible index refuses startup and asks for `memoryd index --rebuild`.
+- The server validates the repository and refreshes the index at startup. Queries run against the shared SQLite index, so writes from other memoryd processes are visible without a restart; a fingerprint check at most once per 30 s adopts an index another process refreshed, rebuilds it after hand edits, and warns only when the repository cannot be re-read or fails validation (the warning clears once the repository heals). A corrupt or schema-incompatible index refuses startup and asks for `memoryd index --rebuild`.
 - Every request runs under a 60-second deadline.
 
 ## Envelope
@@ -37,7 +37,10 @@ A fixed-token-budget context brief assembled deterministically (no generation): 
 |---|---|---|---|
 | `task` | string | yes | What the caller is about to do; drives relevance. |
 | `project` | string | no | Node UUIDv7 or slug path. |
+| `cwd` | string | no | The calling agent's working directory; matched against `projects.yaml` in the data repository when `project` is omitted. |
 | `budget_tokens` | integer | no | Default 1200. The budget rotates across sections. |
+
+Project resolution order: explicit `project`, then the `MEMORYTREE_PROJECT` environment variable, then `cwd` matched against `projects.yaml` (longest path prefix, case-insensitive on Windows). Unresolved briefs keep working and warn once.
 
 ### memory_search
 

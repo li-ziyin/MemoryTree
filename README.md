@@ -2,7 +2,7 @@
 
 Local-first, file-based memory for AI agents: a self-organizing tree of Markdown memories shared across ZCode, OpenCode, Qoder, and any MCP-capable client.
 
-> **Status: M3 complete.** Everything from M1/M2 (v1 format, validator, init, legacy import, disposable SQLite FTS5 index, read-only MCP server, write gateway `memory_add` / `memory_supersede`, `memoryd inbox` capture) plus insertion placement and the gardener: `memory_suggest_mount` over MCP and CLI, `memoryd gardener data/apply` with six primitives, rule-code validation, dry-run by default, rollback, and a single git commit per proposal. The approved restructure of the live repository landed as one `gardener:` commit (bench 21/21), and `memoryd doctor` finishes the crash-recovery story (detect uncommitted writes, recover with one commit, never discard data). Release hardening landed the same day: lint and vulnerability gates in CI and locally, the race detector, a dependency allowlist, and a GoReleaser pipeline with checksums, SBOMs, and signatures. English-first documentation covers the design, format spec, MCP API, migration, and client integration. The remaining V1 promises closed on 2026-10-27: credential redaction on every capture and write, a persisted retrieval-miss log feeding the gardener, and sensitivity-filtered export; the MCP server is verified end-to-end over stdio against the live repository. Next: hook a real client (Qoder or ZCode — see the [client guide](docs/clients.md)) and the first tagged release once the module path is finalized.
+> **Status: M3 complete.** Everything from M1/M2 (v1 format, validator, init, legacy import, disposable SQLite FTS5 index, read-only MCP server, write gateway `memory_add` / `memory_supersede`, `memoryd inbox` capture) plus insertion placement and the gardener: `memory_suggest_mount` over MCP and CLI, `memoryd gardener data/apply` with six primitives, rule-code validation, dry-run by default, rollback, and a single git commit per proposal. The approved restructure of the live repository landed as one `gardener:` commit (bench 21/21), and `memoryd doctor` finishes the crash-recovery story (detect uncommitted writes, recover with one commit, never discard data). Release hardening landed the same day: lint and vulnerability gates in CI and locally, the race detector, a dependency allowlist, and a GoReleaser pipeline with checksums, SBOMs, and signatures. English-first documentation covers the design, format spec, MCP API, migration, and client integration. The remaining V1 promises closed on 2026-10-27: credential redaction on every capture and write, a persisted retrieval-miss log feeding the gardener, and sensitivity-filtered export; the MCP server is verified end-to-end over stdio against the live repository. Shared-memory operation landed the same day: five local clients (ZCode, Qoder, WorkBuddy, OpenCode, DeepSeek Harness) point at one repository, the periodic staleness check self-heals (writes from other processes are visible without a restart; hand edits are re-indexed automatically), `memory_brief` resolves the project from `projects.yaml` / `MEMORYTREE_PROJECT` / `cwd`, and `memoryd install --client` wires a client in one command. Next: the first tagged release once the module path is finalized.
 
 ## Why
 
@@ -85,11 +85,15 @@ echo "raw notes..." | ./bin/memoryd inbox ~/.memorytree --source zcode
 # private entries); the copy is for sharing, not a validatable repository
 ./bin/memoryd export --level public --out ~/memory-share ~/.memorytree
 
+# Register memorytree MCP in a local client (zcode, qoder, workbuddy,
+# opencode, deepseek); --remove uninstalls. Backs up the config first.
+./bin/memoryd install --client qoder ~/.memorytree
+
 # Rerun retrieval questions and fail when a gold entry is not the first hit
 ./bin/memoryd bench ~/.memorytree bench-questions.jsonl
 ```
 
-An MCP client only needs a command and arguments:
+An MCP client only needs a command and arguments — or one `memoryd install --client <name> <data-dir>` call, which writes the entry for ZCode, Qoder, WorkBuddy, OpenCode, and DeepSeek Harness:
 
 ```json
 {
@@ -106,7 +110,7 @@ On Windows, use paths such as `E:\MemoryTreeData`. `memoryd validate --json` and
 
 The index lives at `<data-dir>/.index/index.sqlite`. It is derived data: deleting it loses nothing. A normal `memoryd index` is a no-op when the managed files have not changed; any source change triggers a full rebuild in one SQLite transaction and increments the stored `generation`. An unreadable, corrupt, or schema-incompatible index is left in place and reported; rerun with `--rebuild` to replace it. The index contains full entry text, so `memoryd init` gitignores `.index/`; treat it as a local cache.
 
-`memoryd mcp` validates the repository and refreshes the index at startup, then serves the read tools `memory_brief`, `memory_search`, `memory_get`, and `memory_tree`, plus the write tools `memory_add` and `memory_supersede` (rule-code validation, atomic write, git commit, index refresh; results are searchable in the same session). `memory_get` returns the full body by default, or a bounded excerpt when a `query` is supplied; excerpt responses set `excerpted` and `full_chars`. The server writes only inside `.index/`; memory files are never changed. It works from its startup snapshot, so restart it after editing memory files by hand. A corrupt or schema-incompatible index is not rebuilt automatically: the server refuses to start and reports that `memoryd index --rebuild` is required. Every response carries `index_generation` and warnings, and memory text is labelled `trust: untrusted-history`.
+`memoryd mcp` validates the repository and refreshes the index at startup, then serves the read tools `memory_brief`, `memory_search`, `memory_get`, and `memory_tree`, plus the write tools `memory_add` and `memory_supersede` (rule-code validation, atomic write, git commit, index refresh; results are searchable in the same session). `memory_get` returns the full body by default, or a bounded excerpt when a `query` is supplied; excerpt responses set `excerpted` and `full_chars`. The server writes only inside `.index/`; memory files are never changed. Queries go through the shared SQLite index, so entries written by another memoryd process (another client) are visible without a restart; a fingerprint check at most once per 30 s adopts a refreshed index, rebuilds it after hand edits, and warns only when the repository fails to re-read or validate. A corrupt or schema-incompatible index is not rebuilt automatically: the server refuses to start and reports that `memoryd index --rebuild` is required. Every response carries `index_generation` and warnings, and memory text is labelled `trust: untrusted-history`.
 
 ## Repository layout
 

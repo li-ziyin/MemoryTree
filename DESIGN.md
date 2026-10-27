@@ -180,7 +180,9 @@ Implementation: a hand-written JSON-RPC 2.0 over stdio (one JSON per line), no M
 
 ### 5.2 `memory_brief`
 
-Inputs: `task` (required), `project` (node ID or slug path, optional), `budget_tokens` (default 1200).
+Inputs: `task` (required), `project` (node ID or slug path, optional), `cwd` (the calling agent's working directory, optional), `budget_tokens` (default 1200).
+
+The project resolves in this order: the explicit `project` argument, then the `MEMORYTREE_PROJECT` environment variable (slug path or node ID, set per client in its MCP config), then `cwd` matched against the optional `projects.yaml` in the data repository root (longest path prefix; case-insensitive on Windows; `~` expands to home). An unresolvable brief keeps working and warns once.
 
 Output sections:
 
@@ -196,7 +198,7 @@ The budget rotates across sections: each round adds at most one entry per sectio
 
 **`memory_get` excerpt mode**: the default returns the full body. With `query`, the server extracts fragments around term hits, up to `max_chars` (default 1200, range 200–8000); the response's `body` is the excerpt, with `excerpted=true`, `full_chars`, and a warning. When `query` misses the body, the opening fragment returns with a warning; a body no longer than `max_chars` still returns whole. Full-text mode is unchanged.
 
-**Stale-index warnings and request deadlines** (2026-10-26): before every `tools/call` the server re-reads the data repository fingerprint at most once per 30 seconds; on a mismatch with the startup snapshot (changed sources, failed validation, unreadable) it warns in the response instead of silently serving stale data (the warning appears once; a restart resets it). Every request carries a 60-second deadline context that reaches the SQLite queries, paving the way for M2 write-path cancellation.
+**Stale-index warnings, self-healing refresh, and request deadlines** (2026-10-26, updated 2026-10-27): before every `tools/call` the server re-reads the data repository fingerprint at most once per 30 seconds. Queries run against the shared SQLite index, so writes from another memoryd process are already visible; the check adopts an index another process refreshed (matching generation and fingerprint), rebuilds the index itself after hand edits, and warns only when the repository cannot be re-read or fails validation — the warning clears once the repository heals. Every request carries a 60-second deadline context that reaches the SQLite queries.
 
 ### 5.3 Responses and errors
 
@@ -218,7 +220,7 @@ Memory content is labelled `"trust": "untrusted-history"`, reminding clients thi
 
 ### 5.4 Concurrency and consistency
 
-- Reads: SQLite WAL allows concurrent multi-process reads; the index carries a `generation`. The read-only MCP server validates the repository at startup and refreshes the index by file fingerprint, then works from that snapshot for the session; after hand edits the server restarts. A corrupt or incompatible index never rebuilds automatically — the server refuses to start and points at `memoryd index --rebuild`.
+- Reads: SQLite WAL allows concurrent multi-process reads; the index carries a `generation`. The MCP server validates the repository at startup and refreshes the index by file fingerprint. Queries run against the shared index file, so writes from another memoryd process are visible without a restart; the periodic fingerprint check (at most once per 30 s) adopts an index another process refreshed, rebuilds the index after hand edits, and warns only when the repository fails to re-read or validate — the warning clears once the repository heals (self-healing refresh, 2026-10-27). A corrupt or incompatible index never rebuilds automatically — the server refuses to start and points at `memoryd index --rebuild`.
 - Writes: serialized by a cross-process file lock; files are written via a same-directory temp file + fsync + rename; index updates and the git commit share one critical section (M2).
 - Crash recovery: a write that lands on disk but fails to commit keeps a dirty tree; `memoryd doctor` detects it and completes the commit (implemented 2026-10-27: `memoryd doctor [--fix] [--json]`; detects uncommitted adds/modifications/deletions of managed files plus `.tmp-` crash leftovers; `--fix` removes leftovers under the write lock and, once the tree validates, commits exactly those paths as one `memoryd: doctor recovery` commit; a tree that does not validate is refused — nothing is committed or discarded); data is never lost, nothing resets automatically.
 - Index corruption: `memoryd index --rebuild` rebuilds from files; sources always win.
@@ -312,7 +314,7 @@ Done (2026-10-27, see [docs/m3-acceptance.md](docs/m3-acceptance.md)): `memory_s
 
 ## 11. Open questions
 
-1. Mapping the current project from cwd to a node: does V1 take `project` explicitly from the caller, or add a local `projects.yaml` map? (open; V1 takes it explicitly)
+1. ~~Mapping the current project from cwd to a node: does V1 take `project` explicitly from the caller, or add a local `projects.yaml` map~~ Resolved (2026-10-27): `memory_brief` takes an explicit `project` first, then `MEMORYTREE_PROJECT`, then `cwd` matched against the optional `projects.yaml` (spec §6.1); resolution failure warns and keeps serving.
 2. ~~Who maintains a node's `summary`, and when does it expire~~ Resolved (2026-10-27): `memory_add` never touches node summaries; the gardener's `revise_node` maintains them, effective after human approval.
 3. ~~Do the default max depth / branching factor (suggested 4/8) belong in the spec or only in tool policy~~ Resolved (2026-10-27): keep them as spec warnings (12.6) and tool policy — mounting never limits, the gardener warns via G-DEPTH-1/G-BRANCH-1 without blocking.
 4. ~~May `memory_add` mechanically truncate the body into a `summary`, or must it require a semantic one~~ Resolved (with M2): require a non-empty semantic summary (V-CONTENT-1); no mechanical truncation; semantics are constrained by the distillation prompt.

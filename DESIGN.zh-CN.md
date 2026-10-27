@@ -2,7 +2,7 @@
 
 > 本文件是 [DESIGN.md](DESIGN.md)（英文，权威版本）的中文同步版；两者内容一致，冲突时以英文版为准。
 
-- 状态：M1 实现完成，检索验收复测通过（2026-10-25：20/20 完整与首条命中；每题独立会话 14,723 vs 基线 67,796 token，见 [docs/m1-acceptance.md](docs/m1-acceptance.md)）；人工评分 4.95 已确认（2026-10-26）。工程加固完成（2026-10-26）：CI 三平台矩阵与 schema 一致性检查、解析层直接测试与 fuzz、规模基线（[docs/perf-baseline.md](docs/perf-baseline.md)）、`memoryd bench` 检索回归门、短词 rune 拆分 FTS（索引 schema v2）、MCP 过期警告与请求超时。M2 写路径完成（2026-10-27）：`memory_add`/`memory_supersede`（MCP + CLI）、单写者锁与崩溃回收、git 提交、inbox 采集与蒸馏提示词、真实仓 40 条（[docs/m2-acceptance.md](docs/m2-acceptance.md)）。M3 挂载与 gardener 完成（2026-10-27）：`memory_suggest_mount`（MCP+CLI）与留一法验收、`memoryd gardener data/apply`（6 原语、G- 规则码、dry-run 默认、回滚、单提交；详见 [docs/gardener.zh-CN.md](docs/gardener.zh-CN.md) 与 [docs/m3-acceptance.md](docs/m3-acceptance.md)）。重排提案经用户批准后已应用到真实仓（2026-10-27：单提交 `dc95f2d`，7 节点 40 条，bench 21/21 首条命中）。崩溃恢复 `memoryd doctor` 落地（2026-10-27：检测未提交 managed 变更与崩溃残留，`--fix` 校验后单提交恢复，含 index 领先于 HEAD 的部分手工恢复态；不丢数据、不 reset）。发布加固完成（2026-10-27）：golangci-lint（`.golangci.yml`）与 govulncheck 进入 `scripts/check.sh` 与 CI（新增 lint/vuln/race 作业，Go 版本跟随 go.mod）；依赖白名单测试 `internal/depcheck` 将 go.mod 与 THIRD_PARTY_NOTICES 锁定；`.goreleaser.yaml` + `release.yml` 产出跨平台包（附许可文件）、SHA-256 校验和、syft SPDX SBOM、cosign 无密钥签名与 draft release。升级 x/text v0.29.0→v0.43.0 修复可达漏洞 GO-2026-5970（go 指令升至 1.26）。核心文档英文为主、中文同步（`*.zh-CN.md`），验收记录保持中文。其余 V1 承诺收口（2026-10-27）：采集与写入前脱敏（`internal/redact`，返回计数、原文不落盘）、检索失败日志落盘（`.index/search-misses.jsonl`，每会话去重，`gardener data` 以 `query_misses` 汇总）、按 sensitivity 过滤的导出（`memoryd export`，share view 附 EXPORT-NOTES）、客户端接入指南（`docs/clients.md`），MCP 服务端已对真实仓完成 stdio 端到端验证。
+- 状态：M1 实现完成，检索验收复测通过（2026-10-25：20/20 完整与首条命中；每题独立会话 14,723 vs 基线 67,796 token，见 [docs/m1-acceptance.md](docs/m1-acceptance.md)）；人工评分 4.95 已确认（2026-10-26）。工程加固完成（2026-10-26）：CI 三平台矩阵与 schema 一致性检查、解析层直接测试与 fuzz、规模基线（[docs/perf-baseline.md](docs/perf-baseline.md)）、`memoryd bench` 检索回归门、短词 rune 拆分 FTS（索引 schema v2）、MCP 过期警告与请求超时。M2 写路径完成（2026-10-27）：`memory_add`/`memory_supersede`（MCP + CLI）、单写者锁与崩溃回收、git 提交、inbox 采集与蒸馏提示词、真实仓 40 条（[docs/m2-acceptance.md](docs/m2-acceptance.md)）。M3 挂载与 gardener 完成（2026-10-27）：`memory_suggest_mount`（MCP+CLI）与留一法验收、`memoryd gardener data/apply`（6 原语、G- 规则码、dry-run 默认、回滚、单提交；详见 [docs/gardener.zh-CN.md](docs/gardener.zh-CN.md) 与 [docs/m3-acceptance.md](docs/m3-acceptance.md)）。重排提案经用户批准后已应用到真实仓（2026-10-27：单提交 `dc95f2d`，7 节点 40 条，bench 21/21 首条命中）。崩溃恢复 `memoryd doctor` 落地（2026-10-27：检测未提交 managed 变更与崩溃残留，`--fix` 校验后单提交恢复，含 index 领先于 HEAD 的部分手工恢复态；不丢数据、不 reset）。发布加固完成（2026-10-27）：golangci-lint（`.golangci.yml`）与 govulncheck 进入 `scripts/check.sh` 与 CI（新增 lint/vuln/race 作业，Go 版本跟随 go.mod）；依赖白名单测试 `internal/depcheck` 将 go.mod 与 THIRD_PARTY_NOTICES 锁定；`.goreleaser.yaml` + `release.yml` 产出跨平台包（附许可文件）、SHA-256 校验和、syft SPDX SBOM、cosign 无密钥签名与 draft release。升级 x/text v0.29.0→v0.43.0 修复可达漏洞 GO-2026-5970（go 指令升至 1.26）。核心文档英文为主、中文同步（`*.zh-CN.md`），验收记录保持中文。其余 V1 承诺收口（2026-10-27）：采集与写入前脱敏（`internal/redact`，返回计数、原文不落盘）、检索失败日志落盘（`.index/search-misses.jsonl`，每会话去重，`gardener data` 以 `query_misses` 汇总）、按 sensitivity 过滤的导出（`memoryd export`，share view 附 EXPORT-NOTES）、客户端接入指南（`docs/clients.md`），MCP 服务端已对真实仓完成 stdio 端到端验证。多客户端共享落地（2026-10-27）：本机五个客户端（ZCode/Qoder/WorkBuddy/OpenCode/DeepSeek Harness）接入同一仓库；索引自愈刷新（外部写即写即见、手改自动重建、仅不可恢复时警告并自愈清除）；项目自动映射（显式 `project` → `MEMORYTREE_PROJECT` → `cwd` 与 `projects.yaml` 最长前缀匹配）；`memoryd install --client` 一键接入/移除（写前备份、幂等）。
 - 工作名：MemoryTree；二进制名：`memoryd`
 - 语言与形态：Go，单二进制、默认 stdio、无后台常驻服务
 - 数据目录：独立 git 仓库；本机开发数据先定 `E:\MemoryTreeData`，其他用户默认 `~/.memorytree`
@@ -182,7 +182,9 @@ E:\MemoryTreeData\
 
 ### 5.2 `memory_brief`
 
-输入：`task`（必填）、`project`（节点 ID 或 slug 路径，可选）、`budget_tokens`（默认 1200）。
+输入：`task`（必填）、`project`（节点 ID 或 slug 路径，可选）、`cwd`（调用方工作目录，可选）、`budget_tokens`（默认 1200）。
+
+项目解析顺序（2026-10-27）：显式 `project` 参数 → `MEMORYTREE_PROJECT` 环境变量（slug 路径或节点 ID，在客户端 MCP 配置的 env 里设置）→ `cwd` 与数据仓根目录下可选的 `projects.yaml` 做最长前缀匹配（Windows 下大小写不敏感；`~` 展开为用户主目录）。解析失败时 brief 照常返回并警告一次。
 
 输出分区：
 
@@ -198,7 +200,7 @@ E:\MemoryTreeData\
 
 **memory_get 片段模式**：默认返回完整正文。传 `query` 时按词在正文中的命中位置截取片段，最多 `max_chars` 个字符（默认 1200，范围 200–8000）；响应中 `body` 为片段，并带 `excerpted=true`、`full_chars` 和 warning。`query` 未命中正文时返回开头片段并警告；正文本身不超过 `max_chars` 时仍返回全文。全文模式保持原行为。
 
-**过期索引警告与请求超时**（2026-10-26）：服务端在每次 `tools/call` 前最多每 30 秒重读一次数据仓指纹；与启动快照不一致（源文件变更、校验失败或无法读取）时在响应 warnings 中提示，不再静默服务过期数据（警告只出现一次，重启后恢复）。每个请求带 60 秒超时上下文并贯通到 SQLite 查询，为 M2 写路径的取消传播铺路。
+**过期索引警告、自愈刷新与请求超时**（2026-10-26，2026-10-27 更新）：服务端在每次 `tools/call` 前最多每 30 秒重读一次数据仓指纹。查询走共享 SQLite 索引，其他 memoryd 进程的写入本来就立即可见；该检查会静默采纳其他进程已刷新的索引（对齐 generation 与指纹），手改文件后自行重建索引，只有仓库无法读取或校验失败时才在响应 warnings 中提示——仓库恢复后警告自动清除。每个请求带 60 秒超时上下文并贯通到 SQLite 查询。
 
 ### 5.3 响应与错误
 
@@ -314,7 +316,7 @@ V1 只生成提案与 dry-run，真实应用由人显式触发；不自动合并
 
 ## 11. 待定问题
 
-1. 当前项目如何从 cwd 自动映射到节点：V1 由调用方显式传 `project`，还是加本地 `projects.yaml` 映射？（仍待定；V1 显式传参）
+1. ~~当前项目如何从 cwd 自动映射到节点：V1 由调用方显式传 `project`，还是加本地 `projects.yaml` 映射~~ 已决（2026-10-27）：`memory_brief` 依次取显式 `project` → `MEMORYTREE_PROJECT` → `cwd` 与可选 `projects.yaml` 的最长前缀匹配（规范 §6.1）；解析失败警告并继续服务。
 2. ~~节点 `summary` 由谁维护、何时失效~~ 已决（2026-10-27）：`memory_add` 不动节点摘要；由 gardener 提案的 `revise_node` 维护，人批准后生效。
 3. ~~默认最大深度/分支因子（建议 4/8）是否写进规范，还是只作为工具策略~~ 已决（2026-10-27）：保持规范警告（12.6）、工具策略——mount 不限制、gardener 以 G-DEPTH-1/G-BRANCH-1 警告不阻断。
 4. ~~`memory_add` 是否允许不传 `summary` 时机械截断正文生成，还是强制要求语义摘要~~ 已决（随 M2）：强制非空语义摘要（V-CONTENT-1），不机械截断；语义性由蒸馏提示词约束。

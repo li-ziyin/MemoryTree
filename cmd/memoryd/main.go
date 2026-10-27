@@ -8,10 +8,12 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 
 	"github.com/li-ziyin/memorytree/internal/bench"
+	"github.com/li-ziyin/memorytree/internal/clients"
 	"github.com/li-ziyin/memorytree/internal/export"
 	"github.com/li-ziyin/memorytree/internal/gardener"
 	"github.com/li-ziyin/memorytree/internal/inbox"
@@ -66,6 +68,8 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		return runDoctor(args[1:], stdout, stderr)
 	case "export":
 		return runExport(args[1:], stdout, stderr)
+	case "install":
+		return runInstall(args[1:], stdout, stderr)
 	case "gardener":
 		return runGardener(args[1:], stdin, stdout, stderr)
 	case "version":
@@ -755,6 +759,84 @@ func runExport(args []string, stdout, stderr io.Writer) int {
 	return 0
 }
 
+func runInstall(args []string, stdout, stderr io.Writer) int {
+	fs := flag.NewFlagSet("install", flag.ContinueOnError)
+	fs.SetOutput(stderr)
+	client := fs.String("client", "", "client to configure: "+strings.Join(clients.Known(), ", "))
+	remove := fs.Bool("remove", false, "remove the memorytree entry instead of adding it")
+	exePath := fs.String("exe", "", "path to the memoryd executable (default: this binary)")
+	if err := fs.Parse(args); err != nil {
+		if errors.Is(err, flag.ErrHelp) {
+			return 0
+		}
+		return 2
+	}
+	if *client == "" {
+		fmt.Fprintln(stderr, "usage: memoryd install --client NAME [--exe PATH] <data-dir>")
+		fmt.Fprintln(stderr, "       memoryd install --client NAME --remove")
+		return 2
+	}
+	known := false
+	for _, name := range clients.Known() {
+		if name == *client {
+			known = true
+			break
+		}
+	}
+	if !known {
+		fmt.Fprintf(stderr, "memoryd: unknown client %q; supported: %s\n", *client, strings.Join(clients.Known(), ", "))
+		return 2
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		fmt.Fprintf(stderr, "memoryd: cannot find home directory: %v\n", err)
+		return 2
+	}
+
+	if *remove {
+		if fs.NArg() != 0 {
+			fmt.Fprintln(stderr, "usage: memoryd install --client NAME --remove")
+			return 2
+		}
+		path, removed, err := clients.Remove(home, *client)
+		if err != nil {
+			fmt.Fprintf(stderr, "memoryd: remove failed: %v\n", err)
+			return 1
+		}
+		if !removed {
+			fmt.Fprintf(stdout, "no memorytree entry found for %s\n", *client)
+			return 0
+		}
+		fmt.Fprintf(stdout, "removed memorytree entry for %s: %s\nrestart %s (or its session) to unload the server\n", *client, path, *client)
+		return 0
+	}
+
+	if fs.NArg() != 1 {
+		fmt.Fprintln(stderr, "usage: memoryd install --client NAME [--exe PATH] <data-dir>")
+		return 2
+	}
+	dataDir, err := filepath.Abs(fs.Arg(0))
+	if err != nil {
+		fmt.Fprintf(stderr, "memoryd: bad data directory: %v\n", err)
+		return 2
+	}
+	exe := *exePath
+	if exe == "" {
+		exe, err = os.Executable()
+		if err != nil {
+			fmt.Fprintf(stderr, "memoryd: cannot locate this binary; pass --exe: %v\n", err)
+			return 2
+		}
+	}
+	path, err := clients.Install(home, *client, exe, dataDir)
+	if err != nil {
+		fmt.Fprintf(stderr, "memoryd: install failed: %v\n", err)
+		return 1
+	}
+	fmt.Fprintf(stdout, "memorytree MCP entry written for %s: %s\nrestart %s (or its session) to load the server\n", *client, path, *client)
+	return 0
+}
+
 func runValidate(args []string, stdout, stderr io.Writer) int {
 	fs := flag.NewFlagSet("validate", flag.ContinueOnError)
 	fs.SetOutput(stderr)
@@ -822,6 +904,11 @@ Usage:
                                             detect and recover crashed writes
   memoryd export [--level public|internal|private] --out DIR <data-dir>
                                             copy a sensitivity-filtered share view
+  memoryd install --client NAME [--exe PATH] <data-dir>
+                                            register memorytree MCP in a client
+                                            (deepseek, opencode, qoder,
+                                            workbuddy, zcode)
+  memoryd install --client NAME --remove    remove the memorytree entry
   memoryd gardener data [--out PATH] <data-dir>
                                             emit the tree analysis package
   memoryd gardener apply [--apply] [--json] <data-dir> < proposal.json
