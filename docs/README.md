@@ -11,6 +11,7 @@ Documents are English-first; `*.zh-CN.md` files are synced Chinese versions (the
 - [M1 acceptance](m1-acceptance.md)
 - [M2 acceptance](m2-acceptance.md) — write-path concurrency, crash, and supersede results (2026-10-27)
 - [M3 acceptance](m3-acceptance.md) — mount suggestion and gardener results (2026-10-27)
+- [M4 acceptance](m4-acceptance.md) — capture hooks, state redaction, sync, usage signals, write retry (2026-10-27)
 - [Performance baseline](perf-baseline.md) — index rebuild and search costs at 100/1000/5000 entries
 - [Bench questions format](bench-questions.example.jsonl) — retrieval regression gate for `memoryd bench`
 - [Capture and distillation](distillation-prompt.md) — inbox → memory_add workflow with the agent prompt

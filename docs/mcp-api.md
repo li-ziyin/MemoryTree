@@ -44,7 +44,7 @@ Project resolution order: explicit `project`, then the `MEMORYTREE_PROJECT` envi
 
 ### memory_search
 
-Full-text search (FTS5 trigram; short CJK terms go through a rune-split index) with filters. Returns summaries, IDs, node paths, and status — never full bodies. A search that finds nothing for a non-empty query is logged to `.index/search-misses.jsonl` (once per query per session); the gardener aggregates those misses as restructuring signals.
+Full-text search (FTS5 trigram; short CJK terms go through a rune-split index) with filters. Returns summaries, IDs, node paths, and status — never full bodies. A search that finds nothing for a non-empty query is logged to `.index/search-misses.jsonl` (once per query per session); the gardener aggregates those misses as restructuring signals. Every entry this server actually returns — via search, brief, or get — is also logged to `.index/entry-usage.jsonl` (once per entry per tool per session) and surfaces in the gardener data package as per-entry `returns` / `last_return` and a `cold` flag; the counts never enter the memory files.
 
 | Parameter | Type | Required | Notes |
 |---|---|---|---|
@@ -124,7 +124,7 @@ Link two **existing** entries into a supersede pair; the old entry becomes `supe
 
 ## Concurrency
 
-Reads are concurrent (SQLite WAL). Writes serialize on a cross-process file lock in `<data-dir>/.index/`; a conflicting writer fails fast and may retry. A crash between the file write and the commit leaves a dirty tree that `memoryd doctor` detects and `doctor --fix` recovers — data is never discarded.
+Reads are concurrent (SQLite WAL). Writes serialize on a cross-process file lock in `<data-dir>/.index/`; a call that finds the lock held waits through one bounded contention window (~20 s, re-attempting every 100 ms) before failing with the retryable `WRITE_LOCKED` code — concurrent writers normally both succeed with no retry on the caller side. A crash between the file write and the commit leaves a dirty tree that `memoryd doctor` detects and `doctor --fix` recovers — data is never discarded.
 
 ## CLI equivalents
 
