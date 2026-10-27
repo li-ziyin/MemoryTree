@@ -6,7 +6,9 @@ package gitio
 import (
 	"errors"
 	"fmt"
+	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 )
 
@@ -48,17 +50,65 @@ var hardeningArgs = []string{
 
 // Commit stages exactly the given repository-relative paths and commits
 // them with message. Pathspec commits keep unrelated staged work out of
-// memoryd's commits.
+// memoryd's commits. Only paths still present on disk are staged (new and
+// modified files); deletions need no staging, because the pathspec commit
+// below records them from the work tree against both HEAD and the index —
+// including deletions that were already staged ahead of HEAD by an
+// interrupted manual recovery.
 func Commit(root string, relPaths []string, message string) error {
-	args := append([]string{"-C", root, "add", "--"}, relPaths...)
-	if out, err := run(args); err != nil {
-		return fmt.Errorf("git add %v: %w: %s", relPaths, err, out)
+	var onDisk []string
+	for _, rel := range relPaths {
+		if _, err := os.Stat(filepath.Join(root, filepath.FromSlash(rel))); err == nil {
+			onDisk = append(onDisk, rel)
+		}
 	}
-	args = append([]string{"-C", root, "commit", "-m", message, "--"}, relPaths...)
+	if len(onDisk) > 0 {
+		args := append([]string{"-C", root, "add", "-A", "--"}, onDisk...)
+		if out, err := run(args); err != nil {
+			return fmt.Errorf("git add %v: %w: %s", onDisk, err, out)
+		}
+	}
+	args := append([]string{"-C", root, "commit", "-m", message, "--"}, relPaths...)
 	if out, err := run(args); err != nil {
 		return fmt.Errorf("git commit: %w: %s", err, out)
 	}
 	return nil
+}
+
+// StatusEntry is one work-tree change reported by Status.
+type StatusEntry struct {
+	// Code is the two-character porcelain status, e.g. "M ", " M", " D", "??".
+	Code string
+	// Path is the repository-relative POSIX path of the changed file.
+	Path string
+}
+
+// Status lists every work-tree change (staged and unstaged, untracked
+// included) without resolving renames, so each entry maps to exactly one
+// path. It runs the same hardened git invocation as Commit. The raw output
+// is kept untouched: porcelain records may begin with a space, which the
+// trimmed helper used elsewhere would strip.
+func Status(root string) ([]StatusEntry, error) {
+	cmd := exec.Command("git", append(append([]string{}, hardeningArgs...),
+		"-C", root, "status", "--porcelain", "-z", "--no-renames")...)
+	out, err := cmd.Output()
+	if err != nil {
+		if ee, ok := err.(*exec.ExitError); ok {
+			return nil, fmt.Errorf("git status: %w: %s", err, ee.Stderr)
+		}
+		return nil, fmt.Errorf("git status: %w", err)
+	}
+	var entries []StatusEntry
+	for _, rec := range strings.Split(string(out), "\x00") {
+		if rec == "" {
+			continue
+		}
+		if len(rec) < 4 || rec[2] != ' ' {
+			return nil, fmt.Errorf("git status: unparseable record %q", rec)
+		}
+		entries = append(entries, StatusEntry{Code: rec[:2], Path: rec[3:]})
+	}
+	return entries, nil
 }
 
 func run(args []string) (string, error) {
