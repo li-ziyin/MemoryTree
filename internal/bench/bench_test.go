@@ -1,6 +1,7 @@
 package bench_test
 
 import (
+	"context"
 	"testing"
 
 	"github.com/li-ziyin/memorytree/internal/bench"
@@ -15,7 +16,7 @@ func goldEntryID(t *testing.T, root string) string {
 		t.Fatal(err)
 	}
 	defer ix.Close()
-	hits, err := ix.Search(nil, index.SearchOptions{Query: "金丝雀 needle-0"})
+	hits, err := ix.Search(context.Background(), index.SearchOptions{Query: "金丝雀 needle-0"})
 	if err != nil || len(hits) == 0 {
 		t.Fatalf("no gold entry: %v", err)
 	}

@@ -129,7 +129,7 @@ func (v *validator) checkNodeStructure(rec, rootRec *nodeRec, slugOwners map[str
 	case "node.md", "memories", ".inbox", ".archive", ".index":
 		v.res.errf(CodeSlug, rec.file, "slug %q is reserved", n.Slug)
 	case model.GlobalSlug:
-		if !(n.Kind == model.KindCategory && rec.parent != nil && rec.parent.node.Kind == model.KindRoot) {
+		if n.Kind != model.KindCategory || rec.parent == nil || rec.parent.node.Kind != model.KindRoot {
 			v.res.errf(CodeSlug, rec.file, "global is reserved for a category directly under the root")
 		}
 	}

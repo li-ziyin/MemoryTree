@@ -550,7 +550,7 @@ func runGardenerData(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stderr, "memoryd: repository has %d validation errors\n", res.Errors())
 		return 1
 	}
-	var w io.Writer = stdout
+	var w = stdout
 	if *out != "-" {
 		f, err := os.Create(*out)
 		if err != nil {

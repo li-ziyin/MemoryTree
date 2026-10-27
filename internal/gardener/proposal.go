@@ -685,14 +685,6 @@ func computeTagDiffs(snap *validate.Snapshot, st *simState) []TagDiff {
 	return diffs
 }
 
-func entrySensitivities(snap *validate.Snapshot) map[string]string {
-	out := make(map[string]string, len(snap.Entries))
-	for _, e := range snap.Entries {
-		out[e.ID] = e.Sensitivity
-	}
-	return out
-}
-
 func rank(level string) int { return model.SensitivityRank(level) }
 
 func minusSet(tags []string, drop map[string]bool) []string {

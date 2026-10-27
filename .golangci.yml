@@ -1,0 +1,43 @@
+# golangci-lint v2 configuration.
+# The standard set (errcheck, govet, ineffassign, staticcheck, unused) plus a
+# few cheap, high-signal linters. CI runs `golangci-lint run` via
+# .github/workflows/ci.yml; locally it runs through scripts/check.sh when the
+# tool is installed.
+version: "2"
+
+linters:
+  default: standard
+  enable:
+    - copyloopvar
+    - misspell
+    - nolintlint
+    - unconvert
+  settings:
+    errcheck:
+      exclude-functions:
+        # CLI printing to stdout/stderr: there is nothing meaningful to do
+        # when a diagnostic write fails.
+        - fmt.Fprint
+        - fmt.Fprintf
+        - fmt.Fprintln
+        # Deferred cleanup-only calls on the way out of a function; the
+        # error is unobservable there and every real error path is checked
+        # separately.
+        - (*database/sql.DB).Close
+        - (*database/sql.Rows).Close
+        - (*database/sql.Stmt).Close
+        - (*os.File).Close
+        - (*github.com/li-ziyin/memorytree/internal/index.Index).Close
+        - (*github.com/li-ziyin/memorytree/internal/store.writeLock).release
+  exclusions:
+    # Generated fixtures and long-lived test corpora are out of scope.
+    paths:
+      - spec/examples
+
+formatters:
+  enable:
+    - gofmt
+
+issues:
+  max-issues-per-linter: 0
+  max-same-issues: 0

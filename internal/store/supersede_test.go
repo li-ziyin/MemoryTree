@@ -1,6 +1,7 @@
 package store
 
 import (
+	"context"
 	"strings"
 	"testing"
 
@@ -61,7 +62,7 @@ func TestAddEntrySupersedesRewritesOld(t *testing.T) {
 	// M2 acceptance: superseded entries are gone from default search.
 	ix := indexOpen(t, root)
 	defer ix.Close()
-	hits, err := ix.Search(nil, index.SearchOptions{Query: "U30"})
+	hits, err := ix.Search(context.Background(), index.SearchOptions{Query: "U30"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -70,7 +71,7 @@ func TestAddEntrySupersedesRewritesOld(t *testing.T) {
 			t.Fatalf("superseded entry still in default search: %+v", h)
 		}
 	}
-	all, err := ix.Search(nil, index.SearchOptions{Query: "U30", Statuses: []string{model.EntrySuperseded}})
+	all, err := ix.Search(context.Background(), index.SearchOptions{Query: "U30", Statuses: []string{model.EntrySuperseded}})
 	if err != nil || len(all) != 1 || all[0].ID != first.ID {
 		t.Fatalf("explicit superseded search: %v %+v", err, all)
 	}

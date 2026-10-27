@@ -36,7 +36,17 @@ gofmt -l .
 ```
 
 Run `bash scripts/check.sh` before committing; CI runs the same script
-(gofmt, vet, tests, and a version-stamped build) on every push.
+plus the race detector on every push. Install the two optional tools once
+and the local gate becomes identical to CI:
+
+```bash
+go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@latest
+go install golang.org/x/vuln/cmd/govulncheck@latest
+```
+
+The dependency graph is gated by `internal/depcheck`: every module in
+`go.mod` must be listed there and in `THIRD_PARTY_NOTICES.md`, so adding a
+dependency forces a conscious license review.
 
 The example repository must stay valid:
 

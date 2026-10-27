@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"io"
 	"os"
@@ -124,7 +125,7 @@ func TestRunBenchExitCodes(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	hits, err := ix.Search(nil, index.SearchOptions{Query: "金丝雀 needle-0"})
+	hits, err := ix.Search(context.Background(), index.SearchOptions{Query: "金丝雀 needle-0"})
 	if err != nil || len(hits) == 0 {
 		t.Fatalf("no gold entry: %v", err)
 	}

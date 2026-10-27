@@ -1,6 +1,7 @@
 package store
 
 import (
+	"context"
 	"errors"
 	"os"
 	"os/exec"
@@ -96,7 +97,7 @@ func TestAddEntryWritesValidFile(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer ix.Close()
-	hits, err := ix.Search(nil, index.SearchOptions{Query: "排障手册"})
+	hits, err := ix.Search(context.Background(), index.SearchOptions{Query: "排障手册"})
 	if err != nil || len(hits) != 1 || hits[0].ID != res.ID {
 		t.Fatalf("new entry not searchable: %v %+v", err, hits)
 	}
@@ -113,7 +114,7 @@ func TestAddEntryDefaultsSensitivityToNode(t *testing.T) {
 	}
 	ix := indexOpen(t, root)
 	defer ix.Close()
-	hits, err := ix.Search(nil, index.SearchOptions{Query: "排障手册"})
+	hits, err := ix.Search(context.Background(), index.SearchOptions{Query: "排障手册"})
 	if err != nil || len(hits) != 1 {
 		t.Fatalf("search: %v %+v", err, hits)
 	}
