@@ -12,6 +12,7 @@ import (
 	"strings"
 
 	"github.com/li-ziyin/memorytree/internal/bench"
+	"github.com/li-ziyin/memorytree/internal/export"
 	"github.com/li-ziyin/memorytree/internal/gardener"
 	"github.com/li-ziyin/memorytree/internal/inbox"
 	"github.com/li-ziyin/memorytree/internal/index"
@@ -63,6 +64,8 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		return runInbox(args[1:], stdin, stdout, stderr)
 	case "doctor":
 		return runDoctor(args[1:], stdout, stderr)
+	case "export":
+		return runExport(args[1:], stdout, stderr)
 	case "gardener":
 		return runGardener(args[1:], stdin, stdout, stderr)
 	case "version":
@@ -715,6 +718,43 @@ func runDoctor(args []string, stdout, stderr io.Writer) int {
 	return 0
 }
 
+func runExport(args []string, stdout, stderr io.Writer) int {
+	fs := flag.NewFlagSet("export", flag.ContinueOnError)
+	fs.SetOutput(stderr)
+	level := fs.String("level", "internal", "max sensitivity to include: public, internal, or private (private excludes nothing)")
+	out := fs.String("out", "", "target directory for the export (must be empty or absent)")
+	asJSON := fs.Bool("json", false, "emit the report as JSON")
+	if err := fs.Parse(args); err != nil {
+		if errors.Is(err, flag.ErrHelp) {
+			return 0
+		}
+		return 2
+	}
+	if fs.NArg() != 1 || *out == "" {
+		fmt.Fprintln(stderr, "usage: memoryd export [--level public|internal|private] --out DIR <data-dir>")
+		return 2
+	}
+
+	report, err := export.Export(fs.Arg(0), *out, *level)
+	if err != nil {
+		fmt.Fprintf(stderr, "memoryd: export failed: %v\n", err)
+		return 2
+	}
+	if *asJSON {
+		enc := json.NewEncoder(stdout)
+		enc.SetIndent("", "  ")
+		if err := enc.Encode(report); err != nil {
+			fmt.Fprintf(stderr, "memoryd: cannot write JSON: %v\n", err)
+			return 2
+		}
+	} else {
+		fmt.Fprintf(stdout, "exported %d nodes, %d entries to %s (level %s; skipped %d nodes, %d entries)\n",
+			report.Nodes, report.Entries, report.Out, report.Level, report.NodesSkipped, report.EntriesSkipped)
+		fmt.Fprintln(stdout, "share view only — see EXPORT-NOTES.md; do not validate or write against it")
+	}
+	return 0
+}
+
 func runValidate(args []string, stdout, stderr io.Writer) int {
 	fs := flag.NewFlagSet("validate", flag.ContinueOnError)
 	fs.SetOutput(stderr)
@@ -780,6 +820,8 @@ Usage:
                                             append a raw capture to .inbox/
   memoryd doctor [--fix] [--json] <data-dir>
                                             detect and recover crashed writes
+  memoryd export [--level public|internal|private] --out DIR <data-dir>
+                                            copy a sensitivity-filtered share view
   memoryd gardener data [--out PATH] <data-dir>
                                             emit the tree analysis package
   memoryd gardener apply [--apply] [--json] <data-dir> < proposal.json

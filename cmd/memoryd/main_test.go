@@ -288,6 +288,37 @@ func TestRunInboxRedacts(t *testing.T) {
 	}
 }
 
+func TestRunExport(t *testing.T) {
+	dir := writeRepo(t)
+	if code := run([]string{"add", dir}, strings.NewReader(addJSON), io.Discard, &bytes.Buffer{}); code != 0 {
+		t.Fatalf("add code = %d", code)
+	}
+	out := filepath.Join(t.TempDir(), "share")
+
+	var stdout, stderr bytes.Buffer
+	code := run([]string{"export", "--level", "private", "--out", out, dir}, strings.NewReader(""), &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("export code = %d, stderr: %s", code, stderr.String())
+	}
+	if !strings.Contains(stdout.String(), "entries") {
+		t.Errorf("stdout = %q", stdout.String())
+	}
+	for _, rel := range []string{"memory.yaml", "EXPORT-NOTES.md", filepath.Join("global", "node.md")} {
+		if _, err := os.Stat(filepath.Join(out, rel)); err != nil {
+			t.Errorf("missing %s: %v", rel, err)
+		}
+	}
+
+	// Usage errors: missing --out, unknown level.
+	if code := run([]string{"export", dir}, strings.NewReader(""), io.Discard, &bytes.Buffer{}); code != 2 {
+		t.Errorf("missing --out code = %d, want 2", code)
+	}
+	stderr.Reset()
+	if code := run([]string{"export", "--out", filepath.Join(t.TempDir(), "o"), "--level", "secret", dir}, strings.NewReader(""), io.Discard, &stderr); code != 2 {
+		t.Errorf("bad level code = %d, want 2, stderr %s", code, stderr.String())
+	}
+}
+
 func TestRunDoctor(t *testing.T) {
 	dir := writeRepo(t)
 
