@@ -36,6 +36,19 @@ func inputf(code, format string, args ...any) error {
 // must be fixed before anything is written.
 var ErrInvalidRepository = errors.New("repository has validation errors")
 
+// WithWriteLock runs fn while holding the data repository's single-writer
+// lock, with the same bounded contention retry as the write tools. It lets
+// non-store operations (for example memoryd sync) serialize against
+// memory_add and gardener applies without exporting the lock itself.
+func WithWriteLock(root string, fn func() error) error {
+	lock, err := acquireWriteLockRetried(root)
+	if err != nil {
+		return err
+	}
+	defer lock.release()
+	return fn()
+}
+
 // SourceInput records where a captured memory came from.
 type SourceInput struct {
 	Agent   string `json:"agent"`

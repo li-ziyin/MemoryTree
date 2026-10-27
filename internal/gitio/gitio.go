@@ -116,3 +116,84 @@ func run(args []string) (string, error) {
 	out, err := cmd.CombinedOutput()
 	return strings.TrimSpace(string(out)), err
 }
+
+// Branch names the checked-out branch, or "" on a detached HEAD.
+func Branch(root string) (string, error) {
+	out, err := run([]string{"-C", root, "rev-parse", "--abbrev-ref", "HEAD"})
+	if err != nil {
+		return "", fmt.Errorf("git rev-parse HEAD: %w: %s", err, out)
+	}
+	if out == "HEAD" {
+		return "", nil
+	}
+	return out, nil
+}
+
+// Upstream returns the remote and upstream branch ref of the current
+// branch, for example ("origin", "origin/main"). Fails when no upstream is
+// configured or HEAD is detached.
+func Upstream(root string) (remote, ref string, err error) {
+	out, rerr := run([]string{"-C", root, "rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{upstream}"})
+	if rerr != nil {
+		return "", "", fmt.Errorf("no upstream branch is configured for HEAD: %w: %s", rerr, out)
+	}
+	ref = strings.TrimSpace(out)
+	remote, _, ok := strings.Cut(ref, "/")
+	if !ok || remote == "" || ref == "" {
+		return "", "", fmt.Errorf("cannot parse upstream %q", ref)
+	}
+	return remote, ref, nil
+}
+
+// InProgress reports an unfinished rebase or merge ("rebase", "merge", or
+// "" when the repository is quiet) by checking the marker paths git
+// maintains for them.
+func InProgress(root string) (string, error) {
+	for _, marker := range []string{"rebase-merge", "rebase-apply", "MERGE_HEAD"} {
+		out, err := run([]string{"-C", root, "rev-parse", "--git-path", marker})
+		if err != nil {
+			return "", fmt.Errorf("git rev-parse --git-path %s: %w: %s", marker, err, out)
+		}
+		p := strings.TrimSpace(out)
+		if !filepath.IsAbs(p) {
+			p = filepath.Join(root, p)
+		}
+		if _, err := os.Stat(p); err == nil {
+			if marker == "MERGE_HEAD" {
+				return "merge", nil
+			}
+			return "rebase", nil
+		}
+	}
+	return "", nil
+}
+
+// Fetch updates the remote's refs without touching the work tree.
+func Fetch(root, remote string) (string, error) {
+	return run([]string{"-C", root, "fetch", remote})
+}
+
+// Rebase replays the current branch onto ref. A conflict fails here with
+// the rebase left in progress for the user to resolve or abort.
+func Rebase(root, ref string) (string, error) {
+	out, err := run([]string{"-C", root, "rebase", ref})
+	if err != nil {
+		return out, fmt.Errorf("git rebase %s: %w: %s", ref, err, out)
+	}
+	return out, nil
+}
+
+// Push publishes the branch to the remote.
+func Push(root, remote, branch string) (string, error) {
+	out, err := run([]string{"-C", root, "push", remote, branch})
+	if err != nil {
+		return out, fmt.Errorf("git push %s %s: %w: %s", remote, branch, err, out)
+	}
+	return out, nil
+}
+
+// RunRevListCount counts commits in a rev-range, for example
+// "main..origin/main".
+func RunRevListCount(root, revRange string) (string, error) {
+	return run([]string{"-C", root, "rev-list", "--count", revRange})
+}

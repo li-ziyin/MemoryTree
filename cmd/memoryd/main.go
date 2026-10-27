@@ -23,6 +23,7 @@ import (
 	"github.com/li-ziyin/memorytree/internal/mcpserver"
 	"github.com/li-ziyin/memorytree/internal/model"
 	"github.com/li-ziyin/memorytree/internal/mount"
+	"github.com/li-ziyin/memorytree/internal/reposync"
 	"github.com/li-ziyin/memorytree/internal/store"
 	"github.com/li-ziyin/memorytree/internal/validate"
 )
@@ -68,6 +69,8 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		return runDoctor(args[1:], stdout, stderr)
 	case "export":
 		return runExport(args[1:], stdout, stderr)
+	case "sync":
+		return runSync(args[1:], stdout, stderr)
 	case "install":
 		return runInstall(args[1:], stdout, stderr)
 	case "gardener":
@@ -759,6 +762,59 @@ func runExport(args []string, stdout, stderr io.Writer) int {
 	return 0
 }
 
+func runSync(args []string, stdout, stderr io.Writer) int {
+	fs := flag.NewFlagSet("sync", flag.ContinueOnError)
+	fs.SetOutput(stderr)
+	asJSON := fs.Bool("json", false, "emit machine-readable JSON")
+	if err := fs.Parse(args); err != nil {
+		if errors.Is(err, flag.ErrHelp) {
+			return 0
+		}
+		return 2
+	}
+	if fs.NArg() != 1 {
+		fmt.Fprintln(stderr, "usage: memoryd sync [--json] <data-dir>")
+		return 2
+	}
+	res, err := reposync.Sync(fs.Arg(0))
+	if err != nil {
+		if errors.Is(err, reposync.ErrConflict) {
+			if *asJSON {
+				enc := json.NewEncoder(stdout)
+				enc.SetIndent("", "  ")
+				_ = enc.Encode(res)
+			}
+			fmt.Fprintf(stderr, "memoryd: %v\n", err)
+			return 1
+		}
+		fmt.Fprintf(stderr, "memoryd: sync failed: %v\n", err)
+		return 1
+	}
+	if *asJSON {
+		enc := json.NewEncoder(stdout)
+		enc.SetIndent("", "  ")
+		if err := enc.Encode(res); err != nil {
+			fmt.Fprintf(stderr, "memoryd: cannot write JSON: %v\n", err)
+			return 2
+		}
+		return 0
+	}
+	switch {
+	case res.UpToDate:
+		fmt.Fprintf(stdout, "already up to date with %s (%s)\n", res.Upstream, res.Branch)
+	default:
+		verbs := []string{"fetched"}
+		if res.Rebased {
+			verbs = append(verbs, "rebased")
+		}
+		if res.Pushed {
+			verbs = append(verbs, "pushed")
+		}
+		fmt.Fprintf(stdout, "%s %s (index generation %d)\n", strings.Join(verbs, ", "), res.Upstream, res.IndexGen)
+	}
+	return 0
+}
+
 func runInstall(args []string, stdout, stderr io.Writer) int {
 	fs := flag.NewFlagSet("install", flag.ContinueOnError)
 	fs.SetOutput(stderr)
@@ -904,6 +960,10 @@ Usage:
                                             detect and recover crashed writes
   memoryd export [--level public|internal|private] --out DIR <data-dir>
                                             copy a sensitivity-filtered share view
+  memoryd sync [--json] <data-dir>          fetch + rebase + push the data
+                                            repository under the write lock
+                                            (dirty trees refused; conflicts
+                                            left for git to resolve)
   memoryd install --client NAME [--exe PATH] <data-dir>
                                             register memorytree MCP in a client
                                             (deepseek, opencode, qoder,
