@@ -91,7 +91,7 @@ func TestDataIncludesEntryUsage(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	aged := strings.Replace(string(raw), "2026-10-20T00:00:00Z", "2026-01-01T00:00:00Z", -1)
+	aged := strings.ReplaceAll(string(raw), "2026-10-20T00:00:00Z", "2026-01-01T00:00:00Z")
 	if aged == string(raw) {
 		t.Fatal("could not age the example entry")
 	}

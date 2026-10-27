@@ -69,8 +69,10 @@ func Record(root string, ids []string, source string, now time.Time) error {
 			f.Close()
 			return err
 		}
-		w.Write(line)
-		w.WriteByte('\n')
+		if _, err := w.Write(append(line, '\n')); err != nil {
+			f.Close()
+			return err
+		}
 	}
 	if err := w.Flush(); err != nil {
 		f.Close()

@@ -50,3 +50,63 @@ func TestAppendNamesNeverCollide(t *testing.T) {
 		seen[base] = true
 	}
 }
+
+// Session captures overwrite in place: repeated end-of-turn hooks for one
+// session leave exactly one file with the latest content, while other
+// sessions and sources keep their own files.
+func TestAppendSessionOverwritesSameSession(t *testing.T) {
+	root := t.TempDir()
+	first, _, err := AppendSession(root, "zcode", "sess-1", []byte("第一轮的结果"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, _, err := AppendSession(root, "zcode", "sess-1", []byte("最终轮的结果"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first != second {
+		t.Fatalf("same session wrote two files: %s vs %s", first, second)
+	}
+	raw, err := os.ReadFile(second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(raw)
+	if strings.Contains(text, "第一轮的结果") || !strings.Contains(text, "最终轮的结果") {
+		t.Errorf("overwrite did not replace content:\n%s", text)
+	}
+	if !strings.Contains(text, "session: sess-1") {
+		t.Errorf("session missing from frontmatter:\n%s", text)
+	}
+	if count := strings.Count(text, "source: zcode"); count != 1 {
+		t.Errorf("frontmatter written %d times", count)
+	}
+
+	// A different session and a different source each get their own file.
+	if _, _, err := AppendSession(root, "zcode", "sess-2", []byte("另一会话")); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := AppendSession(root, "opencode", "sess-1", []byte("另一客户端")); err != nil {
+		t.Fatal(err)
+	}
+	names, err := List(root)
+	if err != nil || len(names) != 3 {
+		t.Fatalf("captures = %v (%v), want 3 files", names, err)
+	}
+}
+
+// An empty session id behaves like a plain append; body text can never be
+// mistaken for a session marker.
+func TestAppendSessionWithoutSessionAppends(t *testing.T) {
+	root := t.TempDir()
+	trick := []byte("---\nsource: zcode\nsession: ghost\n---\n\n正文伪装成 frontmatter")
+	for i := 0; i < 2; i++ {
+		if _, _, err := AppendSession(root, "zcode", "", trick); err != nil {
+			t.Fatal(err)
+		}
+	}
+	names, err := List(root)
+	if err != nil || len(names) != 2 {
+		t.Fatalf("captures = %v (%v), want 2 files", names, err)
+	}
+}

@@ -30,6 +30,12 @@
 
 1. **`Plan` 与文档承诺不符**——注释称「有 blocked 操作则 Steps 为空」，实际 blocked 之前成功操作的步骤会留在 Steps 里（store 侧因先检查 OK 而未受影响）。修复为全部通过才输出 Steps，测试钉死。
 2. **sync 把「无可推送」误判为「被拒」**——fast-forward 收敛后的 up-to-date push 触发重试循环空转、3 轮后误报失败。push 返回值拆为 published/rejected 两义。
+3. **`Stop` 按轮触发会刷屏 inbox**——Claude 协议的 `Stop` 是「代理结束响应」事件，每轮一次而非每会话一次；逐轮追加会让 inbox 一天堆几十条。修复：带会话 id 的采集按 (source, session) 原地覆盖（frontmatter 增 `session:` 字段，仅匹配首段 frontmatter 的整行键值，正文伪装无法误配），同一会话永远只留一份最新捕获（首任务 + 最新结论）。空会话 id 退化为普通追加。
+
+## 收尾补记（同日）
+
+- 数据仓未跟踪的 `bench-questions.jsonl` 已提交入 git——它是 `memoryd bench` 的回归题集，留着未跟踪会让 sync 拒绝脏树。
+- 数据仓与源码仓当前都未配置 git remote；首次 `memoryd sync` 前需 `git -C <data-dir> push -u <remote> HEAD` 设上游（remote 选择待用户定）。
 
 ## 遗留
 

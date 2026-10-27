@@ -12,8 +12,7 @@ import (
 // lands as one redacted inbox capture, transcript summary included.
 func TestRunCaptureSessionFromHookPayload(t *testing.T) {
 	data := t.TempDir()
-	transcript := filepath.Join(data, "..", "transcript.jsonl")
-	transcript = filepath.Join(filepath.Dir(data), "transcript.jsonl")
+	transcript := filepath.Join(filepath.Dir(data), "transcript.jsonl")
 	body := `{"type":"user","message":{"role":"user","content":"帮我把 sync 文档补上"}}
 {"type":"assistant","message":{"role":"assistant","content":"文档已补齐。token: ghp_000000000000000000000000000000000000"}}
 `

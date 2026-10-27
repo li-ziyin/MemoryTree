@@ -61,7 +61,7 @@ func TestAddEntryWaitsOutTransientHolder(t *testing.T) {
 	}
 	go func() {
 		time.Sleep(300 * time.Millisecond)
-		os.Remove(path)
+		_ = os.Remove(path)
 	}()
 	if _, err := AddEntry(root, validInput()); err != nil {
 		t.Fatalf("write did not survive a transient lock holder: %v", err)

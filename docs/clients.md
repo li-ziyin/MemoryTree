@@ -76,7 +76,7 @@ Install it per client (idempotent; `--remove` uninstalls):
 - **OpenCode**: a small auto-discovered plugin (`~/.config/opencode/plugins/memorytree-capture.js`) that runs on `session.idle`. No config file is modified.
 - **Other clients** (Qoder, WorkBuddy, DeepSeek Harness) have no verified session-end hook mechanism yet; the generic fallback is calling `capture-session` from wherever the client lets you run a command at exit, or capturing manually.
 
-Captures are raw by design: the inbox has no lock, no git, no validation — strictness applies after distillation via the [distillation prompt](distillation-prompt.md). Both credential and machine-local state redaction apply before anything touches disk.
+Captures are raw by design: the inbox has no lock, no git, no validation — strictness applies after distillation via the [distillation prompt](distillation-prompt.md). Both credential and machine-local state redaction apply before anything touches disk. Captures that carry a session id are keyed by (source, session): ZCode's `Stop` event fires at the end of *every turn*, not once per session, so the capture overwrites itself per turn and the inbox keeps exactly one file per session — carrying the session's first task and latest outcome.
 
 ## Behavior notes for agents
 

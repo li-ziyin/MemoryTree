@@ -10,11 +10,11 @@ echo "会话要点……" | ./bin/memoryd inbox ~/.memorytree --source zcode
 ./bin/memoryd inbox ~/.memorytree --list
 ```
 
-采集落在 `<data>/.inbox/`（已 gitignore，不进索引、不进校验），文件名含 UTC 时间戳与随机尾，永不覆盖。
+采集落在 `<data>/.inbox/`（已 gitignore，不进索引、不进校验），文件名含 UTC 时间戳与随机尾。带会话 id 的采集（如 ZCode/OpenCode 的会话结束钩子）按 (source, session) 去重：同一会话反复触发钩子只覆盖同一份文件，蒸馏时不会重复。
 
 ## 蒸馏提示词（交给 agent，逐条处理 .inbox/ 文件）
 
-> 你在读 MemoryTree 数据仓的原始采集（.inbox/ 目录，格式：YAML 头 captured_at/source + 正文）。逐个文件处理：
+> 你在读 MemoryTree 数据仓的原始采集（.inbox/ 目录，格式：YAML 头 captured_at/source + 可选 session + 正文）。逐个文件处理：
 >
 > 1. 判断该采集是否值得成为一条记忆：可复用的事实、偏好、坑、项目状态才值得；纯过程性内容丢弃。
 > 2. 用 `memory_search` 查同一主题是否已有条目（用 2–3 个关键词，含一个中文双字词）。

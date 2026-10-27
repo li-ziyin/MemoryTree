@@ -582,7 +582,7 @@ func runCaptureSession(args []string, stdin io.Reader, stdout, stderr io.Writer)
 		fmt.Fprintln(stderr, "memoryd: empty capture; nothing stored")
 		return 2
 	}
-	path, redactions, err := inbox.Append(fs.Arg(0), in.Source, content)
+	path, redactions, err := inbox.AppendSession(fs.Arg(0), in.Source, in.Session, content)
 	if err != nil {
 		fmt.Fprintf(stderr, "memoryd: capture failed: %v\n", err)
 		return 1
