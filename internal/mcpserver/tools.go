@@ -1056,7 +1056,7 @@ func storeToolError(err error, tool string) *ToolError {
 	}
 	switch {
 	case errors.Is(err, store.ErrWriteLocked):
-		return &ToolError{Code: "WRITE_LOCKED", Message: "another write is in progress", Suggestion: "Retry shortly."}
+		return &ToolError{Code: "WRITE_LOCKED", Message: "another write held the lock past the retry window", Suggestion: "Retry the call; contention usually clears within seconds."}
 	case errors.Is(err, store.ErrInvalidRepository):
 		return &ToolError{Code: "INVALID_REPOSITORY", Message: err.Error(), Suggestion: "Run memoryd validate and fix the repository before writing."}
 	case errors.Is(err, gitio.ErrGitMissing), errors.Is(err, gitio.ErrNotRepository):

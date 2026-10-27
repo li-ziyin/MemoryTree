@@ -138,7 +138,7 @@ func SupersedeEntry(dataDir, oldID, byID string) (*SupersedeResult, error) {
 	if err := gitio.Preflight(root); err != nil {
 		return nil, err
 	}
-	lock, err := acquireWriteLock(root)
+	lock, err := acquireWriteLockRetried(root)
 	if err != nil {
 		return nil, err
 	}

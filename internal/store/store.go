@@ -98,8 +98,9 @@ func validateSnapshot(root string) (*validate.Result, *validate.Snapshot, error)
 // AddEntry validates the input, writes the entry file atomically, rewrites
 // superseded entries, commits to git, and refreshes the index — all under
 // the single-writer lock. The repository must already validate clean and be
-// a git work tree; the write leaves both clean. Concurrent writers fail
-// fast with ErrWriteLocked and may retry.
+// a git work tree; the write leaves both clean. Contention with a concurrent
+// writer is retried once inside a bounded window; a lock held beyond it
+// still fails with ErrWriteLocked.
 func AddEntry(dataDir string, in EntryInput) (*AddResult, error) {
 	root, err := filepath.Abs(dataDir)
 	if err != nil {
@@ -108,7 +109,7 @@ func AddEntry(dataDir string, in EntryInput) (*AddResult, error) {
 	if err := gitio.Preflight(root); err != nil {
 		return nil, err
 	}
-	lock, err := acquireWriteLock(root)
+	lock, err := acquireWriteLockRetried(root)
 	if err != nil {
 		return nil, err
 	}

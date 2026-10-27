@@ -20,7 +20,16 @@ var ErrWriteLocked = errors.New("another memoryd write is in progress")
 // var so tests can shorten it.
 var lockStaleAfter = 10 * time.Minute
 
+// lockRetryWindow bounds how long a write waits out a concurrent holder
+// before its single retry gives up. A var so tests can shorten it. It must
+// stay well under lockStaleAfter so a waiting writer never races the stale
+// steal.
+var lockRetryWindow = 20 * time.Second
+
 const lockName = "write.lock"
+
+// lockRetryPoll is how often a waiting writer checks for lock release.
+const lockRetryPoll = 100 * time.Millisecond
 
 // writeLock is the single-writer lock for one data repository. It lives in
 // the disposable .index directory and never survives into git.
@@ -76,6 +85,30 @@ func acquireWriteLock(root string) (*writeLock, error) {
 		return nil, ErrWriteLocked
 	}
 	return nil, lastErr
+}
+
+// acquireWriteLockRetried acquires the single-writer lock. When another
+// write holds it, the caller gets one bounded contention window: acquisition
+// is re-attempted every lockRetryPoll until the holder releases or the
+// window closes. Concurrent writers therefore all succeed without
+// caller-side retry, while a lock held beyond the window still fails with
+// ErrWriteLocked.
+func acquireWriteLockRetried(root string) (*writeLock, error) {
+	lock, err := acquireWriteLock(root)
+	if err == nil || !errors.Is(err, ErrWriteLocked) {
+		return lock, err
+	}
+	deadline := time.Now().Add(lockRetryWindow)
+	for {
+		time.Sleep(lockRetryPoll)
+		lock, err := acquireWriteLock(root)
+		if !errors.Is(err, ErrWriteLocked) {
+			return lock, err
+		}
+		if !time.Now().Before(deadline) {
+			return nil, ErrWriteLocked
+		}
+	}
 }
 
 // isWindowsSharingViolation recognises ERROR_SHARING_VIOLATION (32) and

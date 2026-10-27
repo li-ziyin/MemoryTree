@@ -63,7 +63,7 @@ func ApplyGardenerProposal(dataDir string, p *gardener.Proposal, opts GardenerOp
 	if err := gitio.Preflight(root); err != nil {
 		return nil, err
 	}
-	lock, err := acquireWriteLock(root)
+	lock, err := acquireWriteLockRetried(root)
 	if err != nil {
 		return nil, err
 	}
