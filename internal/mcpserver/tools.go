@@ -8,11 +8,13 @@ import (
 	"fmt"
 	"path"
 	"strings"
+	"time"
 	"unicode/utf8"
 
 	"github.com/li-ziyin/memorytree/internal/gitio"
 	"github.com/li-ziyin/memorytree/internal/ids"
 	"github.com/li-ziyin/memorytree/internal/index"
+	"github.com/li-ziyin/memorytree/internal/misslog"
 	"github.com/li-ziyin/memorytree/internal/model"
 	"github.com/li-ziyin/memorytree/internal/mount"
 	"github.com/li-ziyin/memorytree/internal/store"
@@ -571,6 +573,13 @@ func (s *Server) memorySearch(ctx context.Context, raw json.RawMessage) (*Envelo
 	var warnings []string
 	if len(items) == 0 {
 		warnings = append(warnings, "no entries matched the query and filters")
+		if query != "" && s.root != "" && !s.missLogged[query] {
+			// Best effort: a logging failure must never fail the search;
+			// an unrecorded miss simply retries on the next session.
+			if err := misslog.Record(s.root, query, time.Now()); err == nil {
+				s.missLogged[query] = true
+			}
+		}
 	}
 	return s.envelope(items, len(items), warnings...), nil
 }

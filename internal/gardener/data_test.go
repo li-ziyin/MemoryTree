@@ -6,9 +6,11 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/li-ziyin/memorytree/internal/docfile"
 	"github.com/li-ziyin/memorytree/internal/ids"
+	"github.com/li-ziyin/memorytree/internal/misslog"
 	"github.com/li-ziyin/memorytree/internal/model"
 )
 
@@ -36,6 +38,37 @@ func addNode(t *testing.T, root, parentDir, parentID, slug, kind string, tagsDel
 	}
 	if err := docfile.WriteFrontmatter(filepath.Join(dir, "node.md"), node, nil); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestDataIncludesQueryMisses(t *testing.T) {
+	root := t.TempDir()
+	if err := os.CopyFS(root, os.DirFS(filepath.Join("..", "..", "spec", "examples"))); err != nil {
+		t.Fatalf("copy example: %v", err)
+	}
+	if err := misslog.Record(root, "arkts 布局", time.Date(2026, 10, 27, 9, 0, 0, 0, time.UTC)); err != nil {
+		t.Fatal(err)
+	}
+	if err := misslog.Record(root, "arkts 布局", time.Date(2026, 10, 27, 9, 5, 0, 0, time.UTC)); err != nil {
+		t.Fatal(err)
+	}
+	if err := misslog.Record(root, "docker 迁移", time.Date(2026, 10, 27, 9, 6, 0, 0, time.UTC)); err != nil {
+		t.Fatal(err)
+	}
+
+	res, report, err := Data(root)
+	if err != nil {
+		t.Fatalf("data: %v", err)
+	}
+	if report == nil {
+		t.Fatalf("no report: %d validation errors", res.Errors())
+	}
+	if len(report.QueryMisses) != 2 {
+		t.Fatalf("query misses = %+v, want 2", report.QueryMisses)
+	}
+	top := report.QueryMisses[0]
+	if top.Query != "arkts 布局" || top.Count != 2 || top.Last != "2026-10-27T09:05:00Z" {
+		t.Errorf("top miss = %+v", top)
 	}
 }
 

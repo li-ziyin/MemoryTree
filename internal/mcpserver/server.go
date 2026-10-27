@@ -52,6 +52,9 @@ type Server struct {
 	fingerprint string
 	lastCheck   time.Time
 	staleWarned bool
+	// missLogged deduplicates retrieval-miss recording per query for this
+	// session, so a client retry loop cannot flood the log.
+	missLogged map[string]bool
 }
 
 // New prepares a server for an opened index.
@@ -72,6 +75,7 @@ func New(ix *index.Index, opts Options) (*Server, error) {
 		root:        opts.Root,
 		fingerprint: meta.Fingerprint,
 		lastCheck:   time.Now(),
+		missLogged:  map[string]bool{},
 	}, nil
 }
 

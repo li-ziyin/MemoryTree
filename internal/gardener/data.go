@@ -5,6 +5,7 @@ import (
 	"sort"
 	"time"
 
+	"github.com/li-ziyin/memorytree/internal/misslog"
 	"github.com/li-ziyin/memorytree/internal/model"
 	"github.com/li-ziyin/memorytree/internal/validate"
 )
@@ -48,7 +49,11 @@ type DataReport struct {
 	Fingerprint string       `json:"fingerprint"`
 	Nodes       []NodeReport `json:"nodes"`
 	PairSignals []PairSignal `json:"pair_signals"`
-	Guidelines  string       `json:"guidelines"`
+	// QueryMisses aggregates the MCP layer's retrieval-miss log: queries
+	// that kept finding nothing, a restructuring trigger. Empty when no
+	// misses are recorded.
+	QueryMisses []misslog.Miss `json:"query_misses,omitempty"`
+	Guidelines  string         `json:"guidelines"`
 }
 
 // pairJaccardMin is the overlap threshold for a pair signal.
@@ -112,6 +117,11 @@ func Data(root string) (*validate.Result, *DataReport, error) {
 	}
 
 	report.PairSignals = overlapSignals(snap)
+	// Retrieval misses drive restructuring too; an unreadable or missing
+	// log simply yields no signal.
+	if misses, err := misslog.Top(root, 10); err == nil {
+		report.QueryMisses = misses
+	}
 	return res, report, nil
 }
 
