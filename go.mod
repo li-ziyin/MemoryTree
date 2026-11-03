@@ -1,6 +1,6 @@
 module github.com/li-ziyin/memorytree
 
-go 1.26.0
+go 1.26.1
 
 require (
 	golang.org/x/text v0.43.0
